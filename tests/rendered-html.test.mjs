@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const workspaceTitle = /<title>Yang · PhD Master Workspace<\/title>/i;
+const workspaceTitle = /<title>PhD Master Workspace<\/title>/i;
 
 test("renders the PhD workspace title", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);

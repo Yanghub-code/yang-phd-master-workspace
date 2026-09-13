@@ -1,6 +1,4 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
+# Dependencies and generated build output
 /node_modules
 /.pnp
 .pnp.*
@@ -9,41 +7,29 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
-# testing
-/coverage
-
-# next.js
 /.next/
 /out/
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-next-env.d.ts
 /dist/
 /.wrangler/
 /.sites-runtime/
 /outputs/
 /work/
+/coverage
+
+# Local settings and diagnostics
+.DS_Store
+*.pem
+.env*
+.vercel
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+next-env.d.ts
 
 # Deployment identity is intentionally kept outside the public repository.
 /.openai/
 
-# Personal workspace data is stored locally and must never be committed.
+# Personal workspace records must never be committed.
 /phd-master-workspace-data.json
 /*.workspace-data.json
