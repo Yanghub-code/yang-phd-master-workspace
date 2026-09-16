@@ -105,6 +105,7 @@ function shiftMonth(date: string, amount: number) { const next = new Date(`${dat
 function monthLabel(date: string) { return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long" }).format(new Date(`${date}T12:00:00`)); }
 function displayDate(value?: string) { if (!value) return "未设置"; return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "short" }).format(new Date(`${value}T12:00:00`)); }
 function displayTime(value?: string) { if (!value) return "—"; return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)); }
+function timeInputValue(value: string) { const date = new Date(value); return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
 function durationMinutes(start: string, end?: string, now = Date.now()) { const finalTime = end ? new Date(end).getTime() : now; return Math.max(0, Math.round((finalTime - new Date(start).getTime()) / 60_000)); }
 function isSameDay(iso: string, day: string) { return localDate(new Date(iso)) === day; }
 function pct(value: number, total: number) { return total > 0 ? Math.round((value / total) * 100) : 0; }
@@ -136,7 +137,7 @@ export default function Home() {
   const [page, setPage] = useState<PageKey>("home"); const [period, setPeriod] = useState<"每日" | "每周" | "每月">("每日"); const [data, setData] = useState<AppData>(() => blankData()); const [hydrated, setHydrated] = useState(false); const [toast, setToast] = useState(""); const [clockNow, setClockNow] = useState(() => Date.now());
   const [calendarOpen, setCalendarOpen] = useState(false); const [selectedCalendarDate, setSelectedCalendarDate] = useState(today); const [calendarMonth, setCalendarMonth] = useState(() => monthStart(today));
   const [showTaskForm, setShowTaskForm] = useState(false); const [showProjectForm, setShowProjectForm] = useState(false); const [taskFilter, setTaskFilter] = useState("all"); const [leaveType, setLeaveType] = useState("病假");
-  const [taskDraft, setTaskDraft] = useState<TaskEditDraft>({ title: "", description: "", projectId: "", priority: "重要", dueDate: today, estimate: "30" }); const [editingTaskId, setEditingTaskId] = useState<string | null>(null); const [taskEditDraft, setTaskEditDraft] = useState<TaskEditDraft>({ title: "", description: "", projectId: "", priority: "重要", dueDate: "", estimate: "" }); const [projectDraft, setProjectDraft] = useState({ name: "", goal: "", stage: "规划中", deadline: "" }); const [manualFocus, setManualFocus] = useState({ title: "", minutes: "45", date: today }); const [scheduleDraft, setScheduleDraft] = useState({ taskId: "", start: "09:00", end: "10:00" });
+  const [taskDraft, setTaskDraft] = useState<TaskEditDraft>({ title: "", description: "", projectId: "", priority: "重要", dueDate: today, estimate: "30" }); const [editingTaskId, setEditingTaskId] = useState<string | null>(null); const [taskEditDraft, setTaskEditDraft] = useState<TaskEditDraft>({ title: "", description: "", projectId: "", priority: "重要", dueDate: "", estimate: "" }); const [projectDraft, setProjectDraft] = useState({ name: "", goal: "", stage: "规划中", deadline: "" }); const [manualFocus, setManualFocus] = useState({ title: "", minutes: "45", date: today }); const [scheduleDraft, setScheduleDraft] = useState({ taskId: "", start: "09:00", end: "10:00" }); const [editingScheduleBlockId, setEditingScheduleBlockId] = useState<string | null>(null); const [scheduleEditDraft, setScheduleEditDraft] = useState({ taskId: "", start: "09:00", end: "10:00" });
   const [milestoneDraft, setMilestoneDraft] = useState({ title: "", deadline: "" }); const [chapterDraft, setChapterDraft] = useState({ title: "", progress: "0" }); const [thesisLogDraft, setThesisLogDraft] = useState({ minutes: "60", words: "", note: "", date: today }); const [submissionDraft, setSubmissionDraft] = useState({ title: "", journal: "", status: "准备中", submittedDate: "", notes: "" }); const [submissionLogDraft, setSubmissionLogDraft] = useState({ submissionId: "", note: "", date: today });
   const [habitDraft, setHabitDraft] = useState({ name: "", icon: "●", method: "打卡" as Habit["method"] }); const [habitValues, setHabitValues] = useState<Record<string, string>>({}); const [mealDraft, setMealDraft] = useState({ meal: "午餐", note: "", date: today }); const [weightDraft, setWeightDraft] = useState({ weight: "", date: today });
   const [careDraft, setCareDraft] = useState({ stress: "3", energy: "3", drain: "", care: "", gratitude: "", support: "", words: "" }); const [advisorDraft, setAdvisorDraft] = useState<AdvisorDraft>(() => blankAdvisorDraft()); const [reviewDraft, setReviewDraft] = useState({ energy: "3", note: "", output: "", unfinished: "", insight: "", obstacle: "", tomorrow: "" }); const [importText, setImportText] = useState("");
@@ -246,6 +247,29 @@ export default function Home() {
   const discardFocus = () => { if (!activeFocus) return notify("当前没有需要放弃的专注段"); update((current) => ({ ...current, focusRecords: current.focusRecords.filter((record) => record.id !== activeFocus.id) })); notify("本次专注未计入记录"); };
   const addManualFocus = () => { const minutes = Number(manualFocus.minutes); if (!manualFocus.title.trim() || !minutes) return notify("请填写专注事项与时长"); const start = new Date(`${manualFocus.date}T09:00:00`); const end = new Date(start.getTime() + minutes * 60_000); update((current) => ({ ...current, focusRecords: [{ id: newId("manual"), title: manualFocus.title.trim(), start: start.toISOString(), end: end.toISOString(), source: "manual" }, ...current.focusRecords] })); setManualFocus({ title: "", minutes: "45", date: today }); notify("补录专注已保存"); };
   const addSchedule = () => { const task = data.tasks.find((item) => item.id === scheduleDraft.taskId); if (!task) return notify("请选择需要排入日程的任务"); if (scheduleDraft.end <= scheduleDraft.start) return notify("结束时间需晚于开始时间"); update((current) => ({ ...current, scheduleBlocks: [{ id: newId("plan"), title: task.title, taskId: task.id, start: new Date(`${today}T${scheduleDraft.start}:00`).toISOString(), end: new Date(`${today}T${scheduleDraft.end}:00`).toISOString(), source: "plan" }, ...current.scheduleBlocks] })); setScheduleDraft({ taskId: "", start: "09:00", end: "10:00" }); notify("时间块已排入今日日程"); };
+  const cancelScheduleEdit = () => { setEditingScheduleBlockId(null); setScheduleEditDraft({ taskId: "", start: "09:00", end: "10:00" }); };
+  const openScheduleEditor = (block: ScheduleBlock) => {
+    if (block.source !== "plan") return;
+    setEditingScheduleBlockId(block.id);
+    setScheduleEditDraft({ taskId: block.taskId ?? "", start: timeInputValue(block.start), end: timeInputValue(block.end) });
+  };
+  const saveScheduleEdit = () => {
+    const block = data.scheduleBlocks.find((item) => item.id === editingScheduleBlockId);
+    const task = data.tasks.find((item) => item.id === scheduleEditDraft.taskId);
+    if (!block || block.source !== "plan") return cancelScheduleEdit();
+    if (!task) return notify("请选择需要排入日程的任务");
+    if (scheduleEditDraft.end <= scheduleEditDraft.start) return notify("结束时间需晚于开始时间");
+    const blockDate = localDate(new Date(block.start));
+    update((current) => ({ ...current, scheduleBlocks: current.scheduleBlocks.map((item) => item.id === block.id ? { ...item, title: task.title, taskId: task.id, start: new Date(`${blockDate}T${scheduleEditDraft.start}:00`).toISOString(), end: new Date(`${blockDate}T${scheduleEditDraft.end}:00`).toISOString() } : item) }));
+    cancelScheduleEdit();
+    notify("日程安排已更新");
+  };
+  const withdrawSchedule = (block: ScheduleBlock) => {
+    if (block.source !== "plan") return;
+    update((current) => ({ ...current, scheduleBlocks: current.scheduleBlocks.filter((item) => item.id !== block.id) }));
+    if (editingScheduleBlockId === block.id) cancelScheduleEdit();
+    notify("日程安排已撤回，原任务仍保留");
+  };
   const updateThesis = (field: keyof Thesis, value: string) => update((current) => ({ ...current, thesis: { ...current.thesis, [field]: value } }));
   const addMilestone = () => { if (!milestoneDraft.title.trim()) return notify("请填写里程碑"); update((current) => ({ ...current, thesis: { ...current.thesis, milestones: [...current.thesis.milestones, { id: newId("milestone"), title: milestoneDraft.title.trim(), deadline: milestoneDraft.deadline || undefined, done: false }] } })); setMilestoneDraft({ title: "", deadline: "" }); notify("里程碑已添加"); };
   const addChapter = () => { if (!chapterDraft.title.trim()) return notify("请填写章节名称"); update((current) => ({ ...current, thesis: { ...current.thesis, chapters: [...current.thesis.chapters, { id: newId("chapter"), title: chapterDraft.title.trim(), progress: Math.min(100, Math.max(0, Number(chapterDraft.progress) || 0)) }] } })); setChapterDraft({ title: "", progress: "0" }); notify("章节已添加"); };
@@ -330,7 +354,7 @@ export default function Home() {
     setLocalFolderReady(true);
     notify("已断开文件夹同步；本地文件不会被删除");
   };
-  const todayBlocks = data.scheduleBlocks.filter((block) => isSameDay(block.start, workspaceDate)).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()); const filteredTasks = data.tasks.filter((task) => taskFilter === "all" || task.status === taskFilter || task.projectId === taskFilter); const lastWeight = data.weights[0]; const dataSize = hydrated ? `${(new Blob([JSON.stringify(data)]).size / 1024).toFixed(1)} KB` : "读取中";
+  const todayBlocks = data.scheduleBlocks.filter((block) => isSameDay(block.start, workspaceDate)).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()); const scheduleTaskOptions = data.tasks.filter((task) => task.dueDate === today || todayBlocks.some((block) => block.source === "plan" && block.taskId === task.id)); const filteredTasks = data.tasks.filter((task) => taskFilter === "all" || task.status === taskFilter || task.projectId === taskFilter); const lastWeight = data.weights[0]; const dataSize = hydrated ? `${(new Blob([JSON.stringify(data)]).size / 1024).toFixed(1)} KB` : "读取中";
   const recentActivities = useMemo(() => { const activity = [...data.focusRecords.filter((item) => item.end).map((item) => ({ date: item.end ?? item.start, title: `专注 · ${item.title}`, kind: "专注" })), ...data.dailyPlans.map((item) => ({ date: `${item.date}T${item.time || "12:00"}:00`, title: `日计划 · ${item.title}`, kind: item.status === "done" ? "已完成计划" : "日计划" })), ...data.thesis.logs.map((item) => ({ date: `${item.date}T12:00:00`, title: `论文 · ${item.note}`, kind: "论文" })), ...data.submissions.flatMap((item) => item.logs.map((log) => ({ date: `${log.date}T12:00:00`, title: `投稿 · ${log.note}`, kind: "投稿" }))), ...data.researchDataRecords.map((item) => ({ date: `${item.date}T12:00:00`, title: `数据 · ${item.title}`, kind: "数据记录" })), ...data.literatureRecords.map((item) => ({ date: `${item.date}T12:00:00`, title: `文献 · ${item.title}`, kind: "文献记录" })), ...data.simulationRecords.map((item) => ({ date: `${item.date}T12:00:00`, title: `仿真 · ${item.project}`, kind: "代码仿真" })), ...data.reviews.map((item) => ({ date: `${item.date}T20:00:00`, title: `复盘 · ${item.output || item.tomorrow}`, kind: "复盘" }))]; return activity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 12); }, [data]);
   const weekDays = Array.from({ length: 7 }, (_, index) => addDays(today, index - 6)); const maxFocus = Math.max(30, ...weekDays.map((day) => data.focusRecords.filter((record) => isSameDay(record.start, day)).reduce((sum, record) => sum + durationMinutes(record.start, record.end, clockNow), 0)));
   const calendarActivities = useMemo<CalendarActivity[]>(() => {
@@ -450,7 +474,42 @@ export default function Home() {
         <div className="task-stack">{todayTasks.map((task) => <div className="task-item" key={task.id}><span className={`priority priority-${task.priority}`}>{task.priority}</span><div><strong>{task.title}</strong><small>{data.projects.find((project) => project.id === task.projectId)?.name ?? "临时任务"} · 预计 {task.estimateMinutes ?? "—"} 分钟</small>{task.description && <p className="task-description-preview">{task.description}</p>}</div><div className="task-actions"><button className="text-button" type="button" onClick={() => openTaskEditor(task)}>编辑</button>{task.status === "in_progress" ? <button className="button button-small" onClick={() => finishTask(task)}>结束</button> : <button className="button button-small button-primary" onClick={() => startTask(task)}>开始</button>}</div></div>)}{!todayTasks.length && <EmptyState title="暂无今日任务" detail="在项目看板设定截止日期，或新建一个临时任务。" />}</div>
       </section>
       <section className="card focus-card"><div className="card-heading"><div><p className="eyebrow">专注计时器</p><h2>{activeFocus ? activeFocus.title : "未开始"}</h2></div><span className="focus-source">{activeFocus?.source === "task" ? "任务自动关联" : activeFocus ? "自主专注" : "准备好后开始"}</span></div><div className="timer-display">{activeFocus ? focusDisplay : "00:00:00"}</div><p className="muted">当前专注段会自动关联到进行中的任务标题。</p><div className="button-row"><button className="button button-primary" onClick={beginFocus}>开始专注</button><button className="button button-secondary" onClick={() => endFocus()}>结束专注</button><button className="button button-quiet" onClick={discardFocus}>放弃本次</button></div><div className="manual-box"><strong>手动补录</strong><div className="manual-grid"><input value={manualFocus.title} onChange={(event) => setManualFocus({ ...manualFocus, title: event.target.value })} placeholder="专注事项" /><input type="number" min="1" value={manualFocus.minutes} onChange={(event) => setManualFocus({ ...manualFocus, minutes: event.target.value })} placeholder="分钟" /><input type="date" value={manualFocus.date} onChange={(event) => setManualFocus({ ...manualFocus, date: event.target.value })} /><button className="button button-small" onClick={addManualFocus}>添加</button></div></div><div className="list-label"><span>专注时间线</span><b>今日 {todayFocusMinutes} 分钟</b></div><div className="compact-list">{data.focusRecords.filter((record) => isSameDay(record.start, today) && record.end).slice(0, 4).map((record) => <div className="compact-row" key={record.id}><span className="row-icon focus">专</span><div><strong>{record.title}</strong><small>{displayTime(record.start)} — {displayTime(record.end)}</small></div><b>{durationMinutes(record.start, record.end)} 分钟</b></div>)}{!data.focusRecords.some((record) => isSameDay(record.start, today) && record.end) && <EmptyState title="还没有专注记录" detail="从任务开始，或直接启动专注计时器。" />}</div></section>
-      <section className="card schedule-card"><div className="card-heading"><div><p className="eyebrow">今日日程</p><h2>时间块规划</h2></div><span className="muted">{todayBlocks.length} 个时间块</span></div><p className="muted">把软任务锁定到具体时间块，执行顺序会更清晰。</p><div className="schedule-form"><select value={scheduleDraft.taskId} onChange={(event) => setScheduleDraft({ ...scheduleDraft, taskId: event.target.value })}><option value="">从今日任务选择</option>{todayTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select><input type="time" value={scheduleDraft.start} onChange={(event) => setScheduleDraft({ ...scheduleDraft, start: event.target.value })} /><span>至</span><input type="time" value={scheduleDraft.end} onChange={(event) => setScheduleDraft({ ...scheduleDraft, end: event.target.value })} /><button className="button button-small button-primary" onClick={addSchedule}>排入日程</button></div><div className="timeline">{todayBlocks.map((block) => <div className="timeline-item" key={block.id}><time>{displayTime(block.start)}</time><span className={`timeline-dot ${block.source}`}></span><div><strong>{block.title}</strong><small>{displayTime(block.start)} — {displayTime(block.end)} · {block.source === "plan" ? "计划" : "实际执行"}</small></div></div>)}{!todayBlocks.length && <EmptyState title="今天还没有时间块" detail="从今日任务选择一项，把它放进具体时段。" />}</div></section>
+      <section className="card schedule-card">
+        <div className="card-heading"><div><p className="eyebrow">今日日程</p><h2>时间块规划</h2></div><span className="muted">{todayBlocks.length} 个时间块</span></div>
+        <p className="muted">把任务锁定到具体时间块；计划项可随时编辑或撤回，实际执行记录会保留。</p>
+        <div className="schedule-form">
+          <select value={scheduleDraft.taskId} onChange={(event) => setScheduleDraft({ ...scheduleDraft, taskId: event.target.value })}><option value="">从今日任务选择</option>{scheduleTaskOptions.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select>
+          <input type="time" value={scheduleDraft.start} onChange={(event) => setScheduleDraft({ ...scheduleDraft, start: event.target.value })} />
+          <span>至</span>
+          <input type="time" value={scheduleDraft.end} onChange={(event) => setScheduleDraft({ ...scheduleDraft, end: event.target.value })} />
+          <button className="button button-small button-primary" onClick={addSchedule}>排入日程</button>
+        </div>
+        <div className="timeline">
+          {todayBlocks.map((block) => <div className="timeline-entry" key={block.id}>
+            <div className={`timeline-item ${block.source === "plan" ? "is-planned" : ""}`}>
+              <time>{displayTime(block.start)}</time>
+              <span className={`timeline-dot ${block.source}`}></span>
+              <div className="timeline-content">
+                <strong>{block.title}</strong>
+                <small>{displayTime(block.start)} — {displayTime(block.end)} · {block.source === "plan" ? "计划" : "实际执行"}</small>
+                {block.source === "plan" && <div className="timeline-actions"><button className="text-button" type="button" onClick={() => openScheduleEditor(block)}>编辑</button><button className="text-button danger" type="button" onClick={() => withdrawSchedule(block)}>撤回</button></div>}
+              </div>
+            </div>
+            {block.source === "plan" && editingScheduleBlockId === block.id && <div className="schedule-edit-panel">
+              <div className="schedule-edit-heading"><div><strong>编辑日程安排</strong><small>修改只影响此计划时间块；撤回不会删除原任务。</small></div><button className="text-button" type="button" onClick={cancelScheduleEdit}>收起</button></div>
+              <div className="schedule-edit-grid">
+                <select aria-label="关联任务" value={scheduleEditDraft.taskId} onChange={(event) => setScheduleEditDraft({ ...scheduleEditDraft, taskId: event.target.value })}><option value="">从今日任务选择</option>{scheduleTaskOptions.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select>
+                <input aria-label="开始时间" type="time" value={scheduleEditDraft.start} onChange={(event) => setScheduleEditDraft({ ...scheduleEditDraft, start: event.target.value })} />
+                <span>至</span>
+                <input aria-label="结束时间" type="time" value={scheduleEditDraft.end} onChange={(event) => setScheduleEditDraft({ ...scheduleEditDraft, end: event.target.value })} />
+                <button className="button button-small button-primary" type="button" onClick={saveScheduleEdit}>保存</button>
+                <button className="button button-small button-secondary" type="button" onClick={cancelScheduleEdit}>取消</button>
+              </div>
+            </div>}
+          </div>)}
+          {!todayBlocks.length && <EmptyState title="今天还没有时间块" detail="从今日任务选择一项，把它放进具体时段。" />}
+        </div>
+      </section>
     </div>
   </>;
   };
