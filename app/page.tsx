@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ensureFolderPermission,
   forgetFolder,
@@ -34,11 +34,11 @@ type TaskStatus = "todo" | "in_progress" | "done" | "blocked";
 type Priority = "紧急" | "重要" | "一般";
 
 type Project = { id: string; name: string; goal: string; stage: string; deadline?: string; createdAt: string };
-type Task = { id: string; title: string; description?: string; projectId?: string; priority: Priority; status: TaskStatus; dueDate?: string; estimateMinutes?: number; createdAt: string; completedAt?: string };
+type Task = { id: string; title: string; description?: string; projectId?: string; dayPlanId?: string; priority: Priority; status: TaskStatus; dueDate?: string; estimateMinutes?: number; createdAt: string; completedAt?: string };
 type TaskEditDraft = { title: string; description: string; projectId: string; priority: Priority; dueDate: string; estimate: string };
 type ClockSegment = { id: string; type: "work" | "leave"; start: string; end?: string; leaveType?: string };
 type FocusRecord = { id: string; start: string; end?: string; title: string; taskId?: string; source: "task" | "focus" | "manual" };
-type ScheduleBlock = { id: string; title: string; taskId?: string; start: string; end: string; source: "task" | "focus" | "plan" };
+type ScheduleBlock = { id: string; title: string; taskId?: string; dayPlanId?: string; start: string; end: string; source: "task" | "focus" | "plan" };
 type Milestone = { id: string; title: string; deadline?: string; done: boolean };
 type Chapter = { id: string; title: string; progress: number };
 type ThesisLog = { id: string; date: string; minutes: number; words?: number; note: string };
@@ -53,14 +53,17 @@ type CommunicationParty = "导师" | "企业" | "合作方";
 type AdvisorRecord = { id: string; date: string; status: string; channel: string; pressure: string; clarity: string; topic: string; prepared: string; request: string; risk: string; feedback: string; promise: string; confirmation: string; followUpDate?: string; tracking: string; boundary: string; nextAction: string; partyType?: CommunicationParty; contactName?: string; organization?: string; contactRole?: string; projectId?: string };
 type AdvisorDraft = { partyType: CommunicationParty; contactName: string; organization: string; contactRole: string; projectId: string; status: string; channel: string; pressure: string; clarity: string; topic: string; prepared: string; request: string; risk: string; feedback: string; promise: string; confirmation: string; followUpDate: string; tracking: string; boundary: string; nextAction: string };
 type ReviewRecord = { id: string; date: string; energy: number; note: string; output: string; unfinished: string; insight: string; obstacle: string; tomorrow: string };
-type DayPlan = { id: string; date: string; time: string; title: string; priority: Priority; note: string; status: "planned" | "done"; createdAt: string };
+type DayPlan = { id: string; date: string; time: string; title: string; priority: Priority; note: string; status: "planned" | "done"; estimateMinutes?: number; projectId?: string; taskId?: string; scheduleBlockId?: string; createdAt: string };
 type ResearchDataRecord = { id: string; date: string; title: string; kind: string; metrics: string; location: string; note: string; projectId?: string; taskId?: string; createdAt: string };
-type LiteratureRecord = { id: string; date: string; title: string; source: string; status: "待读" | "在读" | "已读"; tags: string; link: string; insight: string; createdAt: string };
-type SimulationRecord = { id: string; date: string; project: string; scenario: string; status: "准备中" | "运行中" | "已完成" | "待复现"; scale: string; codeRef: string; result: string; module?: string; repository?: string; branch?: string; command?: string; projectId?: string; taskId?: string; createdAt: string };
+type LiteratureRecord = { id: string; date: string; title: string; source: string; status: "待读" | "在读" | "已读"; tags: string; link: string; insight: string; projectId?: string; createdAt: string };
+type SimulationRecord = { id: string; date: string; project: string; scenario: string; status: "准备中" | "运行中" | "已完成" | "待复现"; scale: string; codeRef: string; result: string; module?: string; repository?: string; branch?: string; command?: string; commit?: string; configRef?: string; inputRef?: string; outputRef?: string; evidenceRefs?: string; projectId?: string; taskId?: string; createdAt: string };
 type Thesis = { title: string; targetDate: string; version: string; note: string; milestones: Milestone[]; chapters: Chapter[]; logs: ThesisLog[] };
 type WorkspaceSettings = { brandName: string; brandSubtitle: string; homeNote: string; pageLabels: Partial<Record<PageKey, string>>; fontScale: "standard" | "comfortable" };
 type AppData = { version: number; updatedAt: string; workspace: WorkspaceSettings; projects: Project[]; tasks: Task[]; clockSegments: ClockSegment[]; focusRecords: FocusRecord[]; scheduleBlocks: ScheduleBlock[]; dailyPlans: DayPlan[]; researchDataRecords: ResearchDataRecord[]; literatureRecords: LiteratureRecord[]; simulationRecords: SimulationRecord[]; thesis: Thesis; submissions: Submission[]; habits: Habit[]; habitLogs: HabitLog[]; meals: MealRecord[]; weights: WeightRecord[]; careRecords: CareRecord[]; advisorRecords: AdvisorRecord[]; reviews: ReviewRecord[] };
 type CalendarActivity = { id: string; date: string; timestamp: number; category: "执行" | "科研" | "支持"; type: string; title: string; detail: string };
+type AccountState = { authenticated: boolean; username: string | null; hasAccount: boolean };
+type CloudWorkspace = { data: AppData; revision: number; updatedAt: string };
+type MigrationPrompt = { kind: "upload-local" | "choose-newer"; cloud?: CloudWorkspace };
 
 const navItems: Array<{ id: PageKey; label: string; short: string; group?: string }> = [
   { id: "home", label: "总览首页", short: "今" },
@@ -100,6 +103,8 @@ const newId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toStr
 function localDate(value = new Date()) { const offset = value.getTimezoneOffset() * 60_000; return new Date(value.getTime() - offset).toISOString().slice(0, 10); }
 const nowIso = () => new Date().toISOString();
 function addDays(date: string, amount: number) { const next = new Date(`${date}T12:00:00`); next.setDate(next.getDate() + amount); return localDate(next); }
+function addMinutesToTime(time: string, minutes: number) { const [hour, minute] = time.split(":").map(Number); const total = Math.max(0, (hour || 0) * 60 + (minute || 0) + Math.max(5, minutes || 0)); return `${String(Math.floor((total % 1440) / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`; }
+function hasMeaningfulData(data: AppData) { return Boolean(data.projects.length || data.tasks.length || data.clockSegments.length || data.focusRecords.length || data.scheduleBlocks.length || data.dailyPlans.length || data.researchDataRecords.length || data.literatureRecords.length || data.simulationRecords.length || data.thesis.logs.length || data.thesis.milestones.length || data.thesis.chapters.length || data.submissions.length || data.habitLogs.length || data.meals.length || data.weights.length || data.careRecords.length || data.advisorRecords.length || data.reviews.length); }
 function monthStart(date: string) { return `${date.slice(0, 7)}-01`; }
 function shiftMonth(date: string, amount: number) { const next = new Date(`${date}T12:00:00`); next.setMonth(next.getMonth() + amount); return monthStart(localDate(next)); }
 function monthLabel(date: string) { return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long" }).format(new Date(`${date}T12:00:00`)); }
@@ -134,19 +139,20 @@ function Progress({ value, label }: { value: number; label?: string }) { return 
 
 export default function Home() {
   const today = localDate(); const tomorrow = addDays(today, 1);
-  const [page, setPage] = useState<PageKey>("home"); const [period, setPeriod] = useState<"每日" | "每周" | "每月">("每日"); const [data, setData] = useState<AppData>(() => blankData()); const [hydrated, setHydrated] = useState(false); const [toast, setToast] = useState(""); const [clockNow, setClockNow] = useState(() => Date.now());
+  const [page, setPage] = useState<PageKey>("home"); const [period, setPeriod] = useState<"每日" | "每周" | "每月">("每日"); const [data, setData] = useState<AppData>(() => blankData()); const dataRef = useRef(data); dataRef.current = data; const [hydrated, setHydrated] = useState(false); const [toast, setToast] = useState(""); const [clockNow, setClockNow] = useState(() => Date.now());
+  const [account, setAccount] = useState<AccountState | null>(null); const [authBusy, setAuthBusy] = useState(false); const [authError, setAuthError] = useState(""); const [authForm, setAuthForm] = useState({ username: "", password: "", setupCode: "" }); const [passwordDraft, setPasswordDraft] = useState({ currentPassword: "", nextPassword: "" }); const [cloudRevision, setCloudRevision] = useState<number | null>(null); const [cloudReady, setCloudReady] = useState(false); const [cloudStatus, setCloudStatus] = useState<"checking" | "local" | "synced" | "syncing" | "attention">("checking"); const [migrationPrompt, setMigrationPrompt] = useState<MigrationPrompt | null>(null); const lastCloudPayloadRef = useRef<string | null>(null); const cloudSyncTimerRef = useRef<number | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false); const [selectedCalendarDate, setSelectedCalendarDate] = useState(today); const [calendarMonth, setCalendarMonth] = useState(() => monthStart(today));
-  const [showTaskForm, setShowTaskForm] = useState(false); const [showProjectForm, setShowProjectForm] = useState(false); const [taskFilter, setTaskFilter] = useState("all"); const [leaveType, setLeaveType] = useState("病假");
+  const [showTaskForm, setShowTaskForm] = useState(false); const [showProjectForm, setShowProjectForm] = useState(false); const [taskFilter, setTaskFilter] = useState("all"); const [activeProjectId, setActiveProjectId] = useState<string | null>(null); const [editingProjectId, setEditingProjectId] = useState<string | null>(null); const [leaveType, setLeaveType] = useState("病假");
   const [taskDraft, setTaskDraft] = useState<TaskEditDraft>({ title: "", description: "", projectId: "", priority: "重要", dueDate: today, estimate: "30" }); const [editingTaskId, setEditingTaskId] = useState<string | null>(null); const [taskEditDraft, setTaskEditDraft] = useState<TaskEditDraft>({ title: "", description: "", projectId: "", priority: "重要", dueDate: "", estimate: "" }); const [projectDraft, setProjectDraft] = useState({ name: "", goal: "", stage: "规划中", deadline: "" }); const [manualFocus, setManualFocus] = useState({ title: "", minutes: "45", date: today }); const [scheduleDraft, setScheduleDraft] = useState({ taskId: "", start: "09:00", end: "10:00" }); const [editingScheduleBlockId, setEditingScheduleBlockId] = useState<string | null>(null); const [scheduleEditDraft, setScheduleEditDraft] = useState({ taskId: "", start: "09:00", end: "10:00" });
   const [milestoneDraft, setMilestoneDraft] = useState({ title: "", deadline: "" }); const [chapterDraft, setChapterDraft] = useState({ title: "", progress: "0" }); const [thesisLogDraft, setThesisLogDraft] = useState({ minutes: "60", words: "", note: "", date: today }); const [submissionDraft, setSubmissionDraft] = useState({ title: "", journal: "", status: "准备中", submittedDate: "", notes: "" }); const [submissionLogDraft, setSubmissionLogDraft] = useState({ submissionId: "", note: "", date: today });
   const [habitDraft, setHabitDraft] = useState({ name: "", icon: "●", method: "打卡" as Habit["method"] }); const [habitValues, setHabitValues] = useState<Record<string, string>>({}); const [mealDraft, setMealDraft] = useState({ meal: "午餐", note: "", date: today }); const [weightDraft, setWeightDraft] = useState({ weight: "", date: today });
-  const [careDraft, setCareDraft] = useState({ stress: "3", energy: "3", drain: "", care: "", gratitude: "", support: "", words: "" }); const [advisorDraft, setAdvisorDraft] = useState<AdvisorDraft>(() => blankAdvisorDraft()); const [reviewDraft, setReviewDraft] = useState({ energy: "3", note: "", output: "", unfinished: "", insight: "", obstacle: "", tomorrow: "" }); const [importText, setImportText] = useState("");
-  const [dayPlanDraft, setDayPlanDraft] = useState({ date: today, time: "09:00", title: "", priority: "重要" as Priority, note: "" });
+  const [careDraft, setCareDraft] = useState({ stress: "3", energy: "3", drain: "", care: "", gratitude: "", support: "", words: "" }); const [advisorDraft, setAdvisorDraft] = useState<AdvisorDraft>(() => blankAdvisorDraft()); const [editingAdvisorId, setEditingAdvisorId] = useState<string | null>(null); const [reviewDraft, setReviewDraft] = useState({ energy: "3", note: "", output: "", unfinished: "", insight: "", obstacle: "", tomorrow: "" }); const [importText, setImportText] = useState("");
+  const [dayPlanDraft, setDayPlanDraft] = useState({ date: today, time: "09:00", title: "", priority: "重要" as Priority, note: "", estimate: "60", projectId: "" }); const [editingDayPlanId, setEditingDayPlanId] = useState<string | null>(null); const [dayPlanEditDraft, setDayPlanEditDraft] = useState({ date: "", time: "", title: "", priority: "重要" as Priority, note: "", estimate: "60", projectId: "" });
   const [researchDataDraft, setResearchDataDraft] = useState({ date: today, title: "", kind: "实验数据", metrics: "", location: "", note: "", projectId: "" });
   const [expandedResearchDataId, setExpandedResearchDataId] = useState<string | null>(null);
   const [researchDataEditDraft, setResearchDataEditDraft] = useState<ResearchDataRecord | null>(null);
-  const [literatureDraft, setLiteratureDraft] = useState({ date: today, title: "", source: "", status: "待读" as LiteratureRecord["status"], tags: "", link: "", insight: "" });
-  const [simulationDraft, setSimulationDraft] = useState({ date: today, project: "", scenario: "", status: "准备中" as SimulationRecord["status"], scale: "", codeRef: "", result: "", module: "调度系统", repository: "", branch: "", command: "", projectId: "" });
+  const [literatureDraft, setLiteratureDraft] = useState({ date: today, title: "", source: "", status: "待读" as LiteratureRecord["status"], tags: "", link: "", insight: "", projectId: "" }); const [expandedLiteratureId, setExpandedLiteratureId] = useState<string | null>(null); const [literatureEditDraft, setLiteratureEditDraft] = useState<LiteratureRecord | null>(null);
+  const [simulationDraft, setSimulationDraft] = useState({ date: today, project: "", scenario: "", status: "准备中" as SimulationRecord["status"], scale: "", codeRef: "", result: "", module: "调度系统", repository: "", branch: "", command: "", commit: "", configRef: "", inputRef: "", outputRef: "", evidenceRefs: "", projectId: "" });
   const [expandedSimulationId, setExpandedSimulationId] = useState<string | null>(null);
   const [simulationEditDraft, setSimulationEditDraft] = useState<SimulationRecord | null>(null);
   const [localFolder, setLocalFolder] = useState<LocalFolderHandle | null>(null);
@@ -155,6 +161,117 @@ export default function Home() {
   const [lastLocalSync, setLastLocalSync] = useState("");
   const update = (change: (current: AppData) => AppData) => setData((current) => ({ ...change(current), updatedAt: nowIso() }));
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2800); };
+  const loadCloudWorkspace = async (localCandidate = dataRef.current) => {
+    setCloudStatus("checking");
+    try {
+      const response = await fetch("/api/workspace", { cache: "no-store", credentials: "same-origin" });
+      if (response.status === 401) {
+        setAccount((current) => current ? { ...current, authenticated: false } : current);
+        setCloudReady(false);
+        setCloudStatus("local");
+        return;
+      }
+      const payload = await response.json() as { workspace?: { data: unknown; revision: number; updatedAt: string } | null; error?: string };
+      if (!response.ok) throw new Error(payload.error || "云端工作台暂不可用。");
+      if (!payload.workspace) {
+        setCloudRevision(0);
+        setCloudReady(true);
+        if (hasMeaningfulData(localCandidate)) {
+          setMigrationPrompt({ kind: "upload-local" });
+          setCloudStatus("attention");
+        } else {
+          lastCloudPayloadRef.current = JSON.stringify(localCandidate);
+          setCloudStatus("synced");
+        }
+        return;
+      }
+      const cloud: CloudWorkspace = { data: normalizeData(payload.workspace.data), revision: payload.workspace.revision, updatedAt: payload.workspace.updatedAt };
+      setCloudRevision(cloud.revision);
+      const localIsNewer = hasMeaningfulData(localCandidate) && new Date(localCandidate.updatedAt).getTime() > new Date(cloud.updatedAt).getTime();
+      if (localIsNewer) {
+        setMigrationPrompt({ kind: "choose-newer", cloud });
+        setCloudReady(true);
+        setCloudStatus("attention");
+        return;
+      }
+      setData(cloud.data);
+      lastCloudPayloadRef.current = JSON.stringify(cloud.data);
+      setCloudReady(true);
+      setCloudStatus("synced");
+    } catch (error) {
+      setCloudReady(false);
+      setCloudStatus("attention");
+      setAuthError(error instanceof Error ? error.message : "云端工作台暂不可用。");
+    }
+  };
+  const saveCloudWorkspace = async (candidate = dataRef.current, allowMigration = false) => {
+    if (!account?.authenticated || !cloudReady || (migrationPrompt && !allowMigration)) return false;
+    setCloudStatus("syncing");
+    try {
+      const response = await fetch("/api/workspace", { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: candidate, revision: cloudRevision ?? 0 }) });
+      const payload = await response.json() as { revision?: number; error?: string; conflict?: boolean };
+      if (response.status === 409 || payload.conflict) {
+        setCloudStatus("attention");
+        await loadCloudWorkspace(candidate);
+        notify("另一台设备已有更新，请先确认要保留的版本。");
+        return false;
+      }
+      if (!response.ok || typeof payload.revision !== "number") throw new Error(payload.error || "同步失败。");
+      setCloudRevision(payload.revision);
+      lastCloudPayloadRef.current = JSON.stringify(candidate);
+      setCloudStatus("synced");
+      return true;
+    } catch (error) {
+      setCloudStatus("attention");
+      notify(error instanceof Error ? error.message : "云端同步失败，请稍后重试。");
+      return false;
+    }
+  };
+  const acceptMigration = async (choice: "local" | "cloud") => {
+    if (!migrationPrompt) return;
+    if (choice === "cloud" && migrationPrompt.cloud) {
+      setData(migrationPrompt.cloud.data);
+      setCloudRevision(migrationPrompt.cloud.revision);
+      lastCloudPayloadRef.current = JSON.stringify(migrationPrompt.cloud.data);
+      setMigrationPrompt(null);
+      setCloudStatus("synced");
+      notify("已切换为云端版本。");
+      return;
+    }
+    const prompt = migrationPrompt;
+    setMigrationPrompt(null);
+    const saved = await saveCloudWorkspace(dataRef.current, true);
+    if (saved) notify(prompt.kind === "upload-local" ? "本机记录已迁移到云端。" : "已用本机较新记录更新云端。");
+  };
+  const submitAuth = async (mode: "setup" | "login") => {
+    setAuthBusy(true); setAuthError("");
+    try {
+      const response = await fetch(mode === "setup" ? "/api/auth/setup" : "/api/auth/login", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(mode === "setup" ? authForm : { username: authForm.username, password: authForm.password }) });
+      const payload = await response.json() as { authenticated?: boolean; username?: string; hasAccount?: boolean; error?: string };
+      if (!response.ok || !payload.authenticated || !payload.username) throw new Error(payload.error || "无法登录工作台。");
+      setAccount({ authenticated: true, username: payload.username, hasAccount: true });
+      setAuthForm((current) => ({ ...current, password: "", setupCode: "" }));
+      await loadCloudWorkspace(dataRef.current);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "登录失败，请稍后重试。");
+    } finally { setAuthBusy(false); }
+  };
+  const signOut = async () => {
+    setAuthBusy(true);
+    try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch { /* Local lock screen still protects the interface. */ }
+    setAccount((current) => ({ authenticated: false, username: null, hasAccount: current?.hasAccount ?? true }));
+    setCloudReady(false); setCloudRevision(null); setCloudStatus("local"); setMigrationPrompt(null); lastCloudPayloadRef.current = null;
+    setAuthBusy(false);
+  };
+  const changePassword = async () => {
+    setAuthBusy(true); setAuthError("");
+    try {
+      const response = await fetch("/api/auth/password", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(passwordDraft) });
+      const payload = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "密码修改失败。");
+      setPasswordDraft({ currentPassword: "", nextPassword: "" }); notify("登录密码已更新。");
+    } catch (error) { setAuthError(error instanceof Error ? error.message : "密码修改失败。"); } finally { setAuthBusy(false); }
+  };
   useEffect(() => {
     let alive = true;
     const restore = async () => {
@@ -194,7 +311,37 @@ export default function Home() {
     void restore();
     return () => { alive = false; };
   }, []);
+  useEffect(() => {
+    if (!hydrated) return;
+    let alive = true;
+    const restoreAccount = async () => {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store", credentials: "same-origin" });
+        const payload = await response.json() as AccountState & { error?: string };
+        if (!response.ok) throw new Error(payload.error || "账户服务暂不可用。");
+        if (!alive) return;
+        setAccount({ authenticated: Boolean(payload.authenticated), username: payload.username ?? null, hasAccount: Boolean(payload.hasAccount) });
+        if (payload.authenticated) await loadCloudWorkspace(dataRef.current);
+        else setCloudStatus("local");
+      } catch (error) {
+        if (!alive) return;
+        setAccount({ authenticated: false, username: null, hasAccount: false });
+        setCloudStatus("attention");
+        setAuthError(error instanceof Error ? error.message : "账户服务暂不可用。");
+      }
+    };
+    void restoreAccount();
+    return () => { alive = false; };
+  }, [hydrated]);
   useEffect(() => { if (hydrated) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data, hydrated]);
+  useEffect(() => {
+    if (!hydrated || !account?.authenticated || !cloudReady || migrationPrompt) return;
+    const serialized = JSON.stringify(data);
+    if (serialized === lastCloudPayloadRef.current) return;
+    if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
+    cloudSyncTimerRef.current = window.setTimeout(() => { void saveCloudWorkspace(data); }, 850);
+    return () => { if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current); };
+  }, [data, hydrated, account?.authenticated, cloudReady, migrationPrompt, cloudRevision]);
   useEffect(() => {
     if (!localFolder || !localFolderReady || localFolderStatus !== "connected") return;
     void writeFolderJson(localFolder, LOCAL_DATA_FILE, data)
@@ -234,15 +381,26 @@ export default function Home() {
       ...current,
       tasks: current.tasks.map((item) => item.id === taskId ? { ...item, ...next } : item),
       focusRecords: current.focusRecords.map((record) => record.taskId === taskId && !record.end ? { ...record, title } : record),
-      scheduleBlocks: current.scheduleBlocks.map((block) => block.taskId === taskId && block.source === "plan" && isSameDay(block.start, today) ? { ...block, title } : block),
+      scheduleBlocks: current.scheduleBlocks.map((block) => block.taskId === taskId && block.source === "plan" ? { ...block, title } : block),
+      dailyPlans: current.dailyPlans.map((plan) => plan.taskId === taskId ? { ...plan, title, note: next.description ?? plan.note, priority: next.priority, projectId: next.projectId, date: next.dueDate ?? plan.date, estimateMinutes: next.estimateMinutes ?? plan.estimateMinutes } : plan),
     }));
     cancelTaskEdit();
     notify("任务已更新，进行中的专注标题和今日日程也已同步");
   };
-  const addProject = () => { if (!projectDraft.name.trim()) return notify("项目需要一个名称"); update((current) => ({ ...current, projects: [{ id: newId("project"), name: projectDraft.name.trim(), goal: projectDraft.goal.trim(), stage: projectDraft.stage, deadline: projectDraft.deadline || undefined, createdAt: nowIso() }, ...current.projects] })); setProjectDraft({ name: "", goal: "", stage: "规划中", deadline: "" }); setShowProjectForm(false); notify("项目已建立"); };
+  const addProject = () => {
+    const name = projectDraft.name.trim(); if (!name) return notify("项目需要一个名称");
+    if (editingProjectId) {
+      update((current) => ({ ...current, projects: current.projects.map((project) => project.id === editingProjectId ? { ...project, name, goal: projectDraft.goal.trim(), stage: projectDraft.stage, deadline: projectDraft.deadline || undefined } : project) }));
+      setEditingProjectId(null); setProjectDraft({ name: "", goal: "", stage: "规划中", deadline: "" }); setShowProjectForm(false); notify("项目已更新，关联研究档案保持不变"); return;
+    }
+    const project: Project = { id: newId("project"), name, goal: projectDraft.goal.trim(), stage: projectDraft.stage, deadline: projectDraft.deadline || undefined, createdAt: nowIso() };
+    update((current) => ({ ...current, projects: [project, ...current.projects] })); setActiveProjectId(project.id); setProjectDraft({ name: "", goal: "", stage: "规划中", deadline: "" }); setShowProjectForm(false); notify("项目已建立");
+  };
+  const openProjectEditor = (project: Project) => { setProjectDraft({ name: project.name, goal: project.goal, stage: project.stage, deadline: project.deadline || "" }); setEditingProjectId(project.id); setShowProjectForm(true); };
+  const openProjectArchive = (projectId: string) => { setActiveProjectId(projectId); setTaskFilter(projectId); setPage("projects"); window.requestAnimationFrame(() => document.getElementById("project-archive")?.scrollIntoView({ behavior: "smooth", block: "start" })); };
   const startTask = (task: Task) => { const start = nowIso(); update((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "in_progress" } : item), focusRecords: current.focusRecords.some((record) => !record.end) ? current.focusRecords : [{ id: newId("focus"), start, title: task.title, taskId: task.id, source: "task" }, ...current.focusRecords] })); notify("任务已开始，专注计时同步启动"); };
-  const endFocus = (completeTaskId?: string) => { if (!activeFocus) return notify("当前没有正在进行的专注段"); const end = nowIso(); update((current) => ({ ...current, focusRecords: current.focusRecords.map((record) => record.id === activeFocus.id ? { ...record, end } : record), scheduleBlocks: [{ id: newId("block"), title: activeFocus.title, taskId: activeFocus.taskId, start: activeFocus.start, end, source: activeFocus.source === "task" ? "task" : "focus" }, ...current.scheduleBlocks], tasks: current.tasks.map((task) => task.id === (completeTaskId ?? activeFocus.taskId) ? { ...task, status: "done", completedAt: end } : task) })); notify(completeTaskId ? "任务已完成，专注与日程已沉淀" : "专注记录已保存到日程"); };
-  const finishTask = (task: Task) => { if (activeFocus?.taskId === task.id) return endFocus(task.id); update((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "done", completedAt: nowIso() } : item) })); notify("任务已完成"); };
+  const endFocus = (completeTaskId?: string) => { if (!activeFocus) return notify("当前没有正在进行的专注段"); const end = nowIso(); const completedTaskId = completeTaskId ?? activeFocus.taskId; update((current) => ({ ...current, focusRecords: current.focusRecords.map((record) => record.id === activeFocus.id ? { ...record, end } : record), scheduleBlocks: [{ id: newId("block"), title: activeFocus.title, taskId: activeFocus.taskId, start: activeFocus.start, end, source: activeFocus.source === "task" ? "task" : "focus" }, ...current.scheduleBlocks], tasks: current.tasks.map((task) => task.id === completedTaskId ? { ...task, status: "done", completedAt: end } : task), dailyPlans: completedTaskId ? current.dailyPlans.map((plan) => plan.taskId === completedTaskId ? { ...plan, status: "done" } : plan) : current.dailyPlans })); notify(completeTaskId ? "任务已完成，日计划、专注与日程已同步" : "专注记录已保存到日程"); };
+  const finishTask = (task: Task) => { if (activeFocus?.taskId === task.id) return endFocus(task.id); const completedAt = nowIso(); update((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "done", completedAt } : item), dailyPlans: current.dailyPlans.map((plan) => plan.taskId === task.id ? { ...plan, status: "done" } : plan) })); notify("任务已完成，关联日计划也已更新"); };
   const beginFocus = () => { if (activeFocus) return notify("已有正在进行的专注段"); const task = inProgress[0]; update((current) => ({ ...current, focusRecords: [{ id: newId("focus"), start: nowIso(), title: task?.title ?? "自主专注", taskId: task?.id, source: "focus" }, ...current.focusRecords] })); notify(task ? "已关联当前任务开始专注" : "已开始自主专注"); };
   const discardFocus = () => { if (!activeFocus) return notify("当前没有需要放弃的专注段"); update((current) => ({ ...current, focusRecords: current.focusRecords.filter((record) => record.id !== activeFocus.id) })); notify("本次专注未计入记录"); };
   const addManualFocus = () => { const minutes = Number(manualFocus.minutes); if (!manualFocus.title.trim() || !minutes) return notify("请填写专注事项与时长"); const start = new Date(`${manualFocus.date}T09:00:00`); const end = new Date(start.getTime() + minutes * 60_000); update((current) => ({ ...current, focusRecords: [{ id: newId("manual"), title: manualFocus.title.trim(), start: start.toISOString(), end: end.toISOString(), source: "manual" }, ...current.focusRecords] })); setManualFocus({ title: "", minutes: "45", date: today }); notify("补录专注已保存"); };
@@ -282,10 +440,42 @@ export default function Home() {
   const addWeight = () => { if (!Number(weightDraft.weight)) return notify("请填写有效体重"); update((current) => ({ ...current, weights: [{ id: newId("weight"), date: weightDraft.date, weight: Number(weightDraft.weight) }, ...current.weights] })); setWeightDraft({ weight: "", date: today }); notify("体重记录已保存"); };
   const saveCare = () => { update((current) => ({ ...current, careRecords: [{ id: newId("care"), date: today, stress: Number(careDraft.stress), energy: Number(careDraft.energy), drain: careDraft.drain.trim(), care: careDraft.care.trim(), gratitude: careDraft.gratitude.trim(), support: careDraft.support.trim(), words: careDraft.words.trim() }, ...current.careRecords.filter((record) => record.date !== today)] })); notify("今天的心灵关怀记录已保存"); };
   const saveAdvisor = () => { if (!advisorDraft.topic.trim()) return notify("请先写明本次沟通主题"); const dueDate = advisorDraft.followUpDate || tomorrow; const communicationName = advisorDraft.partyType === "企业" ? "企业沟通" : advisorDraft.partyType === "合作方" ? "合作方沟通" : "导师沟通"; update((current) => ({ ...current, advisorRecords: [{ id: newId("communication"), date: workspaceDate, ...advisorDraft, contactName: advisorDraft.contactName.trim(), organization: advisorDraft.organization.trim(), contactRole: advisorDraft.contactRole.trim(), projectId: advisorDraft.projectId || undefined, topic: advisorDraft.topic.trim(), prepared: advisorDraft.prepared.trim(), request: advisorDraft.request.trim(), risk: advisorDraft.risk.trim(), feedback: advisorDraft.feedback.trim(), promise: advisorDraft.promise.trim(), confirmation: advisorDraft.confirmation.trim(), boundary: advisorDraft.boundary.trim(), nextAction: advisorDraft.nextAction.trim() }, ...current.advisorRecords], tasks: advisorDraft.nextAction.trim() ? [{ id: newId("communication-task"), title: `${communicationName}跟进：${advisorDraft.nextAction.trim()}`, projectId: advisorDraft.projectId || undefined, priority: "重要", status: "todo", dueDate, createdAt: nowIso() }, ...current.tasks] : current.tasks })); notify(`${communicationName}已保存${advisorDraft.nextAction.trim() ? "，并同步生成跟进任务" : ""}`); };
+  const saveAdvisorRecord = () => {
+    if (!advisorDraft.topic.trim()) return notify("请先写明本次沟通主题");
+    const cleanDraft = { ...advisorDraft, contactName: advisorDraft.contactName.trim(), organization: advisorDraft.organization.trim(), contactRole: advisorDraft.contactRole.trim(), projectId: advisorDraft.projectId || undefined, topic: advisorDraft.topic.trim(), prepared: advisorDraft.prepared.trim(), request: advisorDraft.request.trim(), risk: advisorDraft.risk.trim(), feedback: advisorDraft.feedback.trim(), promise: advisorDraft.promise.trim(), confirmation: advisorDraft.confirmation.trim(), boundary: advisorDraft.boundary.trim(), nextAction: advisorDraft.nextAction.trim() };
+    if (editingAdvisorId) {
+      update((current) => ({ ...current, advisorRecords: current.advisorRecords.map((record) => record.id === editingAdvisorId ? { ...record, ...cleanDraft } : record) }));
+      setEditingAdvisorId(null); setAdvisorDraft(blankAdvisorDraft()); notify("沟通记录已修改；原有跟进任务不会重复生成。"); return;
+    }
+    const dueDate = cleanDraft.followUpDate || tomorrow; const communicationName = cleanDraft.partyType === "企业" ? "企业沟通" : cleanDraft.partyType === "合作方" ? "合作方沟通" : "导师沟通";
+    update((current) => ({ ...current, advisorRecords: [{ id: newId("communication"), date: workspaceDate, ...cleanDraft }, ...current.advisorRecords], tasks: cleanDraft.nextAction ? [{ id: newId("communication-task"), title: `${communicationName}跟进：${cleanDraft.nextAction}`, projectId: cleanDraft.projectId, priority: "重要", status: "todo", dueDate, createdAt: nowIso() }, ...current.tasks] : current.tasks }));
+    setAdvisorDraft(blankAdvisorDraft()); notify(`${communicationName}已保存${cleanDraft.nextAction ? "，并同步生成跟进任务" : ""}`);
+  };
+  const openAdvisorEditor = (record: AdvisorRecord) => { setEditingAdvisorId(record.id); setAdvisorDraft({ partyType: communicationParty(record), contactName: record.contactName || "", organization: record.organization || "", contactRole: record.contactRole || "", projectId: record.projectId || "", status: record.status, channel: record.channel, pressure: record.pressure, clarity: record.clarity, topic: record.topic, prepared: record.prepared, request: record.request, risk: record.risk, feedback: record.feedback, promise: record.promise, confirmation: record.confirmation, followUpDate: record.followUpDate || "", tracking: record.tracking, boundary: record.boundary, nextAction: record.nextAction }); window.requestAnimationFrame(() => document.getElementById("communication-editor")?.scrollIntoView({ behavior: "smooth", block: "start" })); };
+  const removeAdvisorRecord = (id: string) => { update((current) => ({ ...current, advisorRecords: current.advisorRecords.filter((record) => record.id !== id) })); if (editingAdvisorId === id) { setEditingAdvisorId(null); setAdvisorDraft(blankAdvisorDraft()); } notify("沟通记录已删除；已生成的跟进任务会保留，避免意外丢失。 "); };
   const saveReview = () => { if (!reviewDraft.output.trim() && !reviewDraft.tomorrow.trim()) return notify("至少写下今天的具体产出或明日第一步"); update((current) => ({ ...current, reviews: [{ id: newId("review"), date: today, energy: Number(reviewDraft.energy), note: reviewDraft.note.trim(), output: reviewDraft.output.trim(), unfinished: reviewDraft.unfinished.trim(), insight: reviewDraft.insight.trim(), obstacle: reviewDraft.obstacle.trim(), tomorrow: reviewDraft.tomorrow.trim() }, ...current.reviews.filter((record) => record.date !== today)], tasks: reviewDraft.tomorrow.trim() ? [{ id: newId("review-task"), title: reviewDraft.tomorrow.trim(), priority: "重要", status: "todo", dueDate: tomorrow, createdAt: nowIso() }, ...current.tasks] : current.tasks })); notify("每日复盘已保存，明日优先任务已加入任务表"); };
-  const addDayPlan = () => { if (!dayPlanDraft.title.trim()) return notify("请先写下当天要推进的事项"); update((current) => ({ ...current, dailyPlans: [{ id: newId("day-plan"), date: dayPlanDraft.date, time: dayPlanDraft.time, title: dayPlanDraft.title.trim(), priority: dayPlanDraft.priority, note: dayPlanDraft.note.trim(), status: "planned", createdAt: nowIso() }, ...current.dailyPlans] })); setDayPlanDraft({ date: today, time: "09:00", title: "", priority: "重要", note: "" }); notify("日计划已加入"); };
-  const toggleDayPlan = (plan: DayPlan) => { update((current) => ({ ...current, dailyPlans: current.dailyPlans.map((item) => item.id === plan.id ? { ...item, status: item.status === "done" ? "planned" : "done" } : item) })); notify(plan.status === "done" ? "日计划已恢复待办" : "日计划已标记完成"); };
-  const removeDayPlan = (id: string) => { update((current) => ({ ...current, dailyPlans: current.dailyPlans.filter((item) => item.id !== id) })); notify("日计划已删除"); };
+  const addDayPlan = () => {
+    const title = dayPlanDraft.title.trim();
+    if (!title) return notify("请先写下当天要推进的事项");
+    const planId = newId("day-plan"); const taskId = newId("plan-task"); const scheduleBlockId = newId("plan-block"); const estimateMinutes = Math.max(5, Number(dayPlanDraft.estimate) || 60); const createdAt = nowIso(); const endTime = addMinutesToTime(dayPlanDraft.time || "09:00", estimateMinutes);
+    const task: Task = { id: taskId, dayPlanId: planId, title, description: dayPlanDraft.note.trim() || undefined, projectId: dayPlanDraft.projectId || undefined, priority: dayPlanDraft.priority, status: "todo", dueDate: dayPlanDraft.date, estimateMinutes, createdAt };
+    const plan: DayPlan = { id: planId, date: dayPlanDraft.date, time: dayPlanDraft.time || "09:00", title, priority: dayPlanDraft.priority, note: dayPlanDraft.note.trim(), status: "planned", estimateMinutes, projectId: dayPlanDraft.projectId || undefined, taskId, scheduleBlockId, createdAt };
+    const block: ScheduleBlock = { id: scheduleBlockId, dayPlanId: planId, taskId, title, start: new Date(`${plan.date}T${plan.time}:00`).toISOString(), end: new Date(`${plan.date}T${endTime}:00`).toISOString(), source: "plan" };
+    update((current) => ({ ...current, tasks: [task, ...current.tasks], dailyPlans: [plan, ...current.dailyPlans], scheduleBlocks: [block, ...current.scheduleBlocks] }));
+    setDayPlanDraft({ date: workspaceDate, time: "09:00", title: "", priority: "重要", note: "", estimate: "60", projectId: "" });
+    notify("日计划已同步生成任务与日程时间块");
+  };
+  const openDayPlanEditor = (plan: DayPlan) => { setEditingDayPlanId(plan.id); setDayPlanEditDraft({ date: plan.date, time: plan.time || "09:00", title: plan.title, priority: plan.priority, note: plan.note, estimate: String(plan.estimateMinutes || data.tasks.find((task) => task.id === plan.taskId)?.estimateMinutes || 60), projectId: plan.projectId || data.tasks.find((task) => task.id === plan.taskId)?.projectId || "" }); };
+  const cancelDayPlanEdit = () => { setEditingDayPlanId(null); setDayPlanEditDraft({ date: "", time: "", title: "", priority: "重要", note: "", estimate: "60", projectId: "" }); };
+  const saveDayPlanEdit = () => {
+    const planId = editingDayPlanId; const title = dayPlanEditDraft.title.trim();
+    if (!planId || !title) return notify("计划事项不能为空");
+    const estimateMinutes = Math.max(5, Number(dayPlanEditDraft.estimate) || 60); const next = { date: dayPlanEditDraft.date, time: dayPlanEditDraft.time || "09:00", title, priority: dayPlanEditDraft.priority, note: dayPlanEditDraft.note.trim(), estimateMinutes, projectId: dayPlanEditDraft.projectId || undefined }; const endTime = addMinutesToTime(next.time, estimateMinutes);
+    update((current) => { const plan = current.dailyPlans.find((item) => item.id === planId); if (!plan) return current; return { ...current, dailyPlans: current.dailyPlans.map((item) => item.id === planId ? { ...item, ...next } : item), tasks: current.tasks.map((task) => task.id === plan.taskId ? { ...task, title: next.title, description: next.note || undefined, priority: next.priority, dueDate: next.date, estimateMinutes: next.estimateMinutes, projectId: next.projectId } : task), scheduleBlocks: current.scheduleBlocks.map((block) => block.id === plan.scheduleBlockId || block.dayPlanId === planId ? { ...block, taskId: plan.taskId, title: next.title, start: new Date(`${next.date}T${next.time}:00`).toISOString(), end: new Date(`${next.date}T${endTime}:00`).toISOString() } : block) }; });
+    cancelDayPlanEdit(); notify("日计划、任务和时间块已一起更新");
+  };
+  const toggleDayPlan = (plan: DayPlan) => { const nextStatus = plan.status === "done" ? "planned" : "done"; const completedAt = nextStatus === "done" ? nowIso() : undefined; update((current) => ({ ...current, dailyPlans: current.dailyPlans.map((item) => item.id === plan.id ? { ...item, status: nextStatus } : item), tasks: current.tasks.map((task) => task.id === plan.taskId ? { ...task, status: nextStatus === "done" ? "done" : "todo", completedAt } : task) })); notify(nextStatus === "done" ? "日计划与关联任务已标记完成" : "日计划与关联任务已恢复待办"); };
+  const removeDayPlan = (value: DayPlan | string) => { const plan = typeof value === "string" ? data.dailyPlans.find((item) => item.id === value) : value; if (!plan) return; update((current) => ({ ...current, dailyPlans: current.dailyPlans.filter((item) => item.id !== plan.id), scheduleBlocks: current.scheduleBlocks.filter((block) => block.id !== plan.scheduleBlockId && block.dayPlanId !== plan.id) })); if (editingDayPlanId === plan.id) cancelDayPlanEdit(); notify("计划时间块已撤回，任务仍保留在任务表"); };
   const resolveRecordProjectId = (projectId?: string, legacyTaskId?: string) => projectId || data.tasks.find((task) => task.id === legacyTaskId)?.projectId;
   const addResearchDataRecord = () => { if (!researchDataDraft.title.trim()) return notify("请填写数据或实验记录名称"); update((current) => ({ ...current, researchDataRecords: [{ id: newId("research-data"), date: researchDataDraft.date, title: researchDataDraft.title.trim(), kind: researchDataDraft.kind.trim() || "实验数据", metrics: researchDataDraft.metrics.trim(), location: researchDataDraft.location.trim(), note: researchDataDraft.note.trim(), projectId: researchDataDraft.projectId || undefined, createdAt: nowIso() }, ...current.researchDataRecords] })); setResearchDataDraft({ date: today, title: "", kind: "实验数据", metrics: "", location: "", note: "", projectId: "" }); notify("数据记录已保存"); };
   const toggleResearchDataDetail = (record: ResearchDataRecord) => { if (expandedResearchDataId === record.id) { setExpandedResearchDataId(null); setResearchDataEditDraft(null); return; } setExpandedResearchDataId(record.id); setResearchDataEditDraft({ ...record }); };
@@ -293,15 +483,17 @@ export default function Home() {
   const saveResearchDataEdit = () => { if (!researchDataEditDraft || !researchDataEditDraft.title.trim()) return notify("请填写数据或实验记录名称"); const next = { ...researchDataEditDraft, title: researchDataEditDraft.title.trim(), kind: researchDataEditDraft.kind.trim() || "实验数据", metrics: researchDataEditDraft.metrics.trim(), location: researchDataEditDraft.location.trim(), note: researchDataEditDraft.note.trim(), projectId: resolveRecordProjectId(researchDataEditDraft.projectId, researchDataEditDraft.taskId) || undefined }; update((current) => ({ ...current, researchDataRecords: current.researchDataRecords.map((item) => item.id === next.id ? next : item) })); setResearchDataEditDraft(next); notify("数据记录已修改"); };
   const copyResearchDataLocation = async (location: string) => { if (!location.trim()) return notify("尚未填写数据位置"); try { if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable"); await navigator.clipboard.writeText(location); notify("数据位置已复制"); } catch { notify("浏览器未允许复制，请手动复制位置"); } };
   const removeResearchDataRecord = (id: string) => { update((current) => ({ ...current, researchDataRecords: current.researchDataRecords.filter((item) => item.id !== id) })); if (expandedResearchDataId === id) closeResearchDataDetail(); notify("数据记录已删除"); };
-  const addLiteratureRecord = () => { if (!literatureDraft.title.trim()) return notify("请填写文献题目"); update((current) => ({ ...current, literatureRecords: [{ id: newId("literature"), date: literatureDraft.date, title: literatureDraft.title.trim(), source: literatureDraft.source.trim(), status: literatureDraft.status, tags: literatureDraft.tags.trim(), link: literatureDraft.link.trim(), insight: literatureDraft.insight.trim(), createdAt: nowIso() }, ...current.literatureRecords] })); setLiteratureDraft({ date: today, title: "", source: "", status: "待读", tags: "", link: "", insight: "" }); notify("文献记录已保存"); };
+  const addLiteratureRecord = () => { if (!literatureDraft.title.trim()) return notify("请填写文献题目"); update((current) => ({ ...current, literatureRecords: [{ id: newId("literature"), date: literatureDraft.date, title: literatureDraft.title.trim(), source: literatureDraft.source.trim(), status: literatureDraft.status, tags: literatureDraft.tags.trim(), link: literatureDraft.link.trim(), insight: literatureDraft.insight.trim(), projectId: literatureDraft.projectId || undefined, createdAt: nowIso() }, ...current.literatureRecords] })); setLiteratureDraft({ date: today, title: "", source: "", status: "待读", tags: "", link: "", insight: "", projectId: "" }); notify("文献记录已保存"); };
   const updateLiteratureStatus = (id: string, status: LiteratureRecord["status"]) => update((current) => ({ ...current, literatureRecords: current.literatureRecords.map((item) => item.id === id ? { ...item, status } : item) }));
+  const toggleLiteratureDetail = (record: LiteratureRecord) => { if (expandedLiteratureId === record.id) { setExpandedLiteratureId(null); setLiteratureEditDraft(null); return; } setExpandedLiteratureId(record.id); setLiteratureEditDraft({ ...record }); };
+  const saveLiteratureEdit = () => { if (!literatureEditDraft || !literatureEditDraft.title.trim()) return notify("请填写文献题目"); const next = { ...literatureEditDraft, title: literatureEditDraft.title.trim(), source: literatureEditDraft.source.trim(), tags: literatureEditDraft.tags.trim(), link: literatureEditDraft.link.trim(), insight: literatureEditDraft.insight.trim(), projectId: literatureEditDraft.projectId || undefined }; update((current) => ({ ...current, literatureRecords: current.literatureRecords.map((item) => item.id === next.id ? next : item) })); setLiteratureEditDraft(next); notify("文献记录已修改"); };
   const removeLiteratureRecord = (id: string) => { update((current) => ({ ...current, literatureRecords: current.literatureRecords.filter((item) => item.id !== id) })); notify("文献记录已删除"); };
-  const addSimulationRecord = () => { if (!simulationDraft.project.trim() || !simulationDraft.scenario.trim()) return notify("请填写代码项目与本次运行内容"); update((current) => ({ ...current, simulationRecords: [{ id: newId("simulation"), date: simulationDraft.date, project: simulationDraft.project.trim(), scenario: simulationDraft.scenario.trim(), status: simulationDraft.status, scale: simulationDraft.scale.trim(), codeRef: simulationDraft.codeRef.trim(), result: simulationDraft.result.trim(), module: simulationDraft.module.trim() || "未分类", repository: simulationDraft.repository.trim(), branch: simulationDraft.branch.trim(), command: simulationDraft.command.trim(), projectId: simulationDraft.projectId || undefined, createdAt: nowIso() }, ...current.simulationRecords] })); setSimulationDraft({ date: today, project: "", scenario: "", status: "准备中", scale: "", codeRef: "", result: "", module: "调度系统", repository: "", branch: "", command: "", projectId: "" }); notify("代码运行日志已保存"); };
+  const addSimulationRecord = () => { if (!simulationDraft.project.trim() || !simulationDraft.scenario.trim()) return notify("请填写代码项目与本次运行内容"); update((current) => ({ ...current, simulationRecords: [{ id: newId("simulation"), date: simulationDraft.date, project: simulationDraft.project.trim(), scenario: simulationDraft.scenario.trim(), status: simulationDraft.status, scale: simulationDraft.scale.trim(), codeRef: simulationDraft.codeRef.trim(), result: simulationDraft.result.trim(), module: simulationDraft.module.trim() || "未分类", repository: simulationDraft.repository.trim(), branch: simulationDraft.branch.trim(), command: simulationDraft.command.trim(), commit: simulationDraft.commit.trim(), configRef: simulationDraft.configRef.trim(), inputRef: simulationDraft.inputRef.trim(), outputRef: simulationDraft.outputRef.trim(), evidenceRefs: simulationDraft.evidenceRefs.trim(), projectId: simulationDraft.projectId || undefined, createdAt: nowIso() }, ...current.simulationRecords] })); setSimulationDraft({ date: today, project: "", scenario: "", status: "准备中", scale: "", codeRef: "", result: "", module: "调度系统", repository: "", branch: "", command: "", commit: "", configRef: "", inputRef: "", outputRef: "", evidenceRefs: "", projectId: "" }); notify("代码运行日志已保存"); };
   const toggleSimulationDetail = (record: SimulationRecord) => { if (expandedSimulationId === record.id) { setExpandedSimulationId(null); setSimulationEditDraft(null); return; } setExpandedSimulationId(record.id); setSimulationEditDraft({ ...record }); };
   const closeSimulationDetail = () => { setExpandedSimulationId(null); setSimulationEditDraft(null); };
-  const saveSimulationEdit = () => { if (!simulationEditDraft || !simulationEditDraft.project.trim() || !simulationEditDraft.scenario.trim()) return notify("请填写代码项目与本次运行内容"); const next = { ...simulationEditDraft, project: simulationEditDraft.project.trim(), scenario: simulationEditDraft.scenario.trim(), scale: simulationEditDraft.scale.trim(), codeRef: simulationEditDraft.codeRef.trim(), result: simulationEditDraft.result.trim(), module: simulationEditDraft.module?.trim() || "未分类", repository: simulationEditDraft.repository?.trim() || "", branch: simulationEditDraft.branch?.trim() || "", command: simulationEditDraft.command?.trim() || "", projectId: resolveRecordProjectId(simulationEditDraft.projectId, simulationEditDraft.taskId) || undefined }; update((current) => ({ ...current, simulationRecords: current.simulationRecords.map((item) => item.id === next.id ? next : item) })); setSimulationEditDraft(next); notify("代码运行日志已修改"); };
+  const saveSimulationEdit = () => { if (!simulationEditDraft || !simulationEditDraft.project.trim() || !simulationEditDraft.scenario.trim()) return notify("请填写代码项目与本次运行内容"); const next = { ...simulationEditDraft, project: simulationEditDraft.project.trim(), scenario: simulationEditDraft.scenario.trim(), scale: simulationEditDraft.scale.trim(), codeRef: simulationEditDraft.codeRef.trim(), result: simulationEditDraft.result.trim(), module: simulationEditDraft.module?.trim() || "未分类", repository: simulationEditDraft.repository?.trim() || "", branch: simulationEditDraft.branch?.trim() || "", command: simulationEditDraft.command?.trim() || "", commit: simulationEditDraft.commit?.trim() || "", configRef: simulationEditDraft.configRef?.trim() || "", inputRef: simulationEditDraft.inputRef?.trim() || "", outputRef: simulationEditDraft.outputRef?.trim() || "", evidenceRefs: simulationEditDraft.evidenceRefs?.trim() || "", projectId: resolveRecordProjectId(simulationEditDraft.projectId, simulationEditDraft.taskId) || undefined }; update((current) => ({ ...current, simulationRecords: current.simulationRecords.map((item) => item.id === next.id ? next : item) })); setSimulationEditDraft(next); notify("代码运行日志已修改"); };
   const removeSimulationRecord = (id: string) => { update((current) => ({ ...current, simulationRecords: current.simulationRecords.filter((item) => item.id !== id) })); if (expandedSimulationId === id) closeSimulationDetail(); notify("代码运行日志已删除"); };
-  const openLinkedProject = (projectId?: string) => { const project = data.projects.find((item) => item.id === projectId); if (!project) return notify("关联项目已不存在或尚未选择"); setTaskFilter(project.id); setPage("projects"); window.requestAnimationFrame(() => document.querySelector(".task-board")?.scrollIntoView({ behavior: "smooth", block: "start" })); };
+  const openLinkedProject = (projectId?: string) => { const project = data.projects.find((item) => item.id === projectId); if (!project) return notify("关联项目已不存在或尚未选择"); openProjectArchive(project.id); };
   const exportData = () => { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `phd-master-workspace-${today}.json`; link.click(); URL.revokeObjectURL(url); notify("JSON 备份已下载"); };
   const copyData = async () => { try { await navigator.clipboard.writeText(JSON.stringify(data, null, 2)); notify("JSON 已复制到剪贴板"); } catch { notify("浏览器未允许复制，请使用下方文本框手动复制"); } };
   const importData = (value = importText) => { try { const parsed = normalizeData(JSON.parse(value)); setData(parsed); setImportText(""); notify("数据已导入并覆盖当前本机记录"); } catch { notify("JSON 格式不正确，尚未导入"); } };
@@ -529,6 +721,51 @@ export default function Home() {
     <section className="card"><div className="card-heading"><div><p className="eyebrow">计划清单</p><h2>按日期与时段回看</h2></div><span className="muted">{plans.length} 条记录</span></div><div className="research-record-grid">{plans.map((plan) => <article className={`research-record plan-record ${plan.status === "done" ? "is-done" : ""}`} key={plan.id}><div className="record-top"><span className={`record-badge plan-${plan.status}`}>{plan.status === "done" ? "已完成" : "待推进"}</span><time>{displayDate(plan.date)} · {plan.time || "待定"}</time></div><h3>{plan.title}</h3>{plan.note && <p className="record-note">{plan.note}</p>}<div className="record-bottom"><span className={`priority priority-${plan.priority}`}>{plan.priority}</span><div className="record-actions"><button className="button button-small" onClick={() => toggleDayPlan(plan)}>{plan.status === "done" ? "恢复" : "完成"}</button><button className="text-button danger" onClick={() => removeDayPlan(plan.id)}>删除</button></div></div></article>)}{!plans.length && <EmptyState title="还没有日计划" detail="从明天最重要的一件事开始安排，让计划有时间点与完成标准。" />}</div></section>
   </>; };
 
+  const renderPlansV2 = () => {
+    const plans = [...data.dailyPlans].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+    const scopedPlans = plans.filter((item) => item.date === workspaceDate);
+    const doneCount = scopedPlans.filter((item) => item.status === "done").length;
+    return <>
+      <SectionTitle eyebrow="DAILY PLAN / 一条计划，三处同步" title={pageLabel("plans")} note="新增日计划会同时生成关联任务与计划时间块；编辑任一计划时，任务内容、优先级与日程会一起更新。" action={<div className="button-row"><button className="button button-secondary" onClick={() => switchWorkspaceDate(today)}>今天</button><button className="button button-primary" onClick={() => setDayPlanDraft((current) => ({ ...current, date: workspaceDate }))}>按所选日期新增</button></div>} />
+      <div className="history-view-banner plan-date-banner"><span>计划日期</span><strong>{displayDate(workspaceDate)}</strong><small>日历选择的日期会保留在这里；可查看、修改或为该日新增计划。</small></div>
+      <div className="metric-grid research-metrics"><Metric label="当日计划" value={scopedPlans.length} note="任务与时间块已关联" tone="blue" /><Metric label="当日完成" value={doneCount} note={scopedPlans.length ? `${pct(doneCount, scopedPlans.length)}% 已完成` : "先安排第一件事"} tone="green" /><Metric label="计划时间块" value={data.scheduleBlocks.filter((item) => item.dayPlanId && isSameDay(item.start, workspaceDate)).length} note="可在总览日程撤回或调整" tone="orange" /><Metric label="全部计划" value={plans.length} note="跨日期持续沉淀" tone="violet" /></div>
+      <section className="card research-form">
+        <div className="card-heading"><div><p className="eyebrow">新增日计划</p><h2>一次输入，自动进入任务表与日程</h2></div></div>
+        <div className="form-grid four">
+          <label className="field"><span>计划日期</span><input type="date" value={dayPlanDraft.date} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, date: event.target.value })} /></label>
+          <label className="field"><span>开始时间</span><input type="time" value={dayPlanDraft.time} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, time: event.target.value })} /></label>
+          <label className="field"><span>预计分钟</span><input type="number" min="5" value={dayPlanDraft.estimate} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, estimate: event.target.value })} /></label>
+          <label className="field"><span>关联项目</span><select value={dayPlanDraft.projectId} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, projectId: event.target.value })}><option value="">临时推进</option>{data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+          <label className="field field-span-2"><span>计划事项</span><input value={dayPlanDraft.title} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, title: event.target.value })} placeholder="例如：完成 200 车规模实验的第一轮参数扫描" /></label>
+          <label className="field"><span>优先级</span><select value={dayPlanDraft.priority} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, priority: event.target.value as Priority })}><option>紧急</option><option>重要</option><option>一般</option></select></label>
+          <label className="field field-span-2"><span>具体内容 / 完成标准</span><textarea value={dayPlanDraft.note} onChange={(event) => setDayPlanDraft({ ...dayPlanDraft, note: event.target.value })} placeholder="写下要交付的结果、关键检查点或需要保存的证据。" /></label>
+          <div className="form-actions"><button className="button button-primary" onClick={addDayPlan}>生成推进链</button></div>
+        </div>
+      </section>
+      <section className="card">
+        <div className="card-heading"><div><p className="eyebrow">所选日期的计划</p><h2>{displayDate(workspaceDate)} · 推进清单</h2></div><span className="muted">{scopedPlans.length} 条</span></div>
+        <div className="research-record-grid">
+          {scopedPlans.map((plan) => {
+            const linkedTask = data.tasks.find((task) => task.id === plan.taskId);
+            const linkedProject = data.projects.find((project) => project.id === (plan.projectId || linkedTask?.projectId));
+            const editing = editingDayPlanId === plan.id;
+            return <article className={`research-record plan-record ${plan.status === "done" ? "is-done" : ""}`} key={plan.id}>
+              <div className="record-top"><span className={`record-badge plan-${plan.status}`}>{plan.status === "done" ? "已完成" : linkedTask?.status === "in_progress" ? "进行中" : "待推进"}</span><time>{plan.time || "待定"} · {plan.estimateMinutes || linkedTask?.estimateMinutes || 60} 分钟</time></div>
+              <h3>{plan.title}</h3>
+              <p className="record-detail"><b>关联：</b>{linkedProject?.name || "临时推进"} · {linkedTask ? `任务已${statusText[linkedTask.status]}` : "旧计划未关联任务"}</p>
+              {plan.note && <p className="record-note">{plan.note}</p>}
+              <div className="record-bottom"><span className={`priority priority-${plan.priority}`}>{plan.priority}</span><div className="record-actions"><button className="text-button" type="button" onClick={() => openDayPlanEditor(plan)}>编辑</button><button className="button button-small" type="button" onClick={() => toggleDayPlan(plan)}>{plan.status === "done" ? "恢复" : "完成"}</button><button className="text-button danger" type="button" onClick={() => removeDayPlan(plan)}>撤回计划</button></div></div>
+              {editing && <div className="inline-edit-panel">
+                <div className="form-grid four"><label className="field"><span>日期</span><input type="date" value={dayPlanEditDraft.date} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, date: event.target.value })} /></label><label className="field"><span>开始</span><input type="time" value={dayPlanEditDraft.time} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, time: event.target.value })} /></label><label className="field"><span>预计分钟</span><input type="number" min="5" value={dayPlanEditDraft.estimate} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, estimate: event.target.value })} /></label><label className="field"><span>关联项目</span><select value={dayPlanEditDraft.projectId} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, projectId: event.target.value })}><option value="">临时推进</option>{data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="field field-span-2"><span>计划事项</span><input value={dayPlanEditDraft.title} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, title: event.target.value })} /></label><label className="field"><span>优先级</span><select value={dayPlanEditDraft.priority} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, priority: event.target.value as Priority })}><option>紧急</option><option>重要</option><option>一般</option></select></label><label className="field field-span-3"><span>具体内容 / 完成标准</span><textarea value={dayPlanEditDraft.note} onChange={(event) => setDayPlanEditDraft({ ...dayPlanEditDraft, note: event.target.value })} /></label><div className="form-actions"><button className="button button-small button-primary" type="button" onClick={saveDayPlanEdit}>保存联动修改</button><button className="button button-small button-secondary" type="button" onClick={cancelDayPlanEdit}>取消</button></div></div>
+              </div>}
+            </article>;
+          })}
+          {!scopedPlans.length && <EmptyState title="这一天还没有计划" detail="新增一条日计划后，会自动生成同名任务和可调整的时间块。" />}
+        </div>
+      </section>
+    </>;
+  };
+
   const renderResearchData = () => <>
     <SectionTitle eyebrow="RESEARCH DATA / 数据、实验与证据" title={pageLabel("researchData")} note="每条记录同时保留证据、位置与关联项目；点击下方数据条即可展开原位修改。" />
     <section className="card research-form">
@@ -588,6 +825,7 @@ export default function Home() {
                 <div><span>关联项目</span><strong>{linkedProject ? linkedProject.name : "暂未关联项目"}</strong></div>
                 {linkedProject && <div className="data-location-actions"><button className="button button-small button-secondary" type="button" onClick={() => openLinkedProject(linkedProject.id)}>查看项目</button></div>}
               </div>
+              <div className="reproducibility-panel"><p className="eyebrow">REPRODUCIBILITY / 可复现链</p><div><span>代码版本</span><strong>{editDraft.commit || editDraft.branch || "待补充"}</strong></div><div><span>配置 / 参数</span><strong>{editDraft.configRef || "待补充"}</strong></div><div><span>输入</span><strong>{editDraft.inputRef || "待补充"}</strong></div><div><span>输出 / 证据</span><strong>{editDraft.outputRef || editDraft.evidenceRefs || "待补充"}</strong></div></div>
               <div className="form-grid four data-edit-grid">
                 <label className="field"><span>记录日期</span><input type="date" value={editDraft.date} onChange={(event) => setResearchDataEditDraft({ ...editDraft, date: event.target.value })} /></label>
                 <label className="field"><span>记录类型</span><input value={editDraft.kind} onChange={(event) => setResearchDataEditDraft({ ...editDraft, kind: event.target.value })} /></label>
@@ -618,6 +856,12 @@ export default function Home() {
     <section className="card"><div className="card-heading"><div><p className="eyebrow">阅读库</p><h2>文献状态与研究启发</h2></div><span className="muted">{data.literatureRecords.length} 条记录</span></div><div className="research-record-grid">{data.literatureRecords.map((record) => <article className="research-record" key={record.id}><div className="record-top"><span className="record-badge">文献</span><time>{displayDate(record.date)}</time></div><h3>{record.title}</h3>{record.source && <p className="record-detail">{record.source}</p>}{record.tags && <p className="record-detail"><b>标签：</b>{record.tags}</p>}{record.link && <p className="record-detail"><b>位置：</b>{record.link}</p>}{record.insight && <p className="record-note">{record.insight}</p>}<div className="record-bottom"><select className="record-status" aria-label="文献阅读状态" value={record.status} onChange={(event) => updateLiteratureStatus(record.id, event.target.value as LiteratureRecord["status"])}><option>待读</option><option>在读</option><option>已读</option></select><div className="record-actions"><button className="text-button danger" onClick={() => removeLiteratureRecord(record.id)}>删除</button></div></div></article>)}{!data.literatureRecords.length && <EmptyState title="还没有文献记录" detail="从一篇关键论文开始，留下题目、状态和一条自己的研究判断。" />}</div></section>
   </>;
 
+  const renderLiteratureV2 = () => <>
+    <SectionTitle eyebrow="LITERATURE / 阅读、判断与项目归档" title={pageLabel("literature")} note="每条文献可原位展开编辑，并关联到具体项目，形成可回看的理论依据与研究判断。" />
+    <section className="card research-form"><div className="card-heading"><div><p className="eyebrow">新增文献记录</p><h2>建立可回看的阅读卡片</h2></div></div><div className="form-grid four"><label className="field"><span>记录日期</span><input type="date" value={literatureDraft.date} onChange={(event) => setLiteratureDraft({ ...literatureDraft, date: event.target.value })} /></label><label className="field"><span>阅读状态</span><select value={literatureDraft.status} onChange={(event) => setLiteratureDraft({ ...literatureDraft, status: event.target.value as LiteratureRecord["status"] })}><option>待读</option><option>在读</option><option>已读</option></select></label><label className="field field-span-2"><span>关联项目</span><select value={literatureDraft.projectId} onChange={(event) => setLiteratureDraft({ ...literatureDraft, projectId: event.target.value })}><option value="">暂不关联项目</option>{data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="field field-span-2"><span>文献题目</span><input value={literatureDraft.title} onChange={(event) => setLiteratureDraft({ ...literatureDraft, title: event.target.value })} placeholder="论文标题或书籍章节" /></label><label className="field field-span-2"><span>作者 / 期刊 / 会议</span><input value={literatureDraft.source} onChange={(event) => setLiteratureDraft({ ...literatureDraft, source: event.target.value })} /></label><label className="field field-span-2"><span>关键词 / 标签</span><input value={literatureDraft.tags} onChange={(event) => setLiteratureDraft({ ...literatureDraft, tags: event.target.value })} /></label><label className="field field-span-2"><span>DOI / 链接 / 本地位置</span><input value={literatureDraft.link} onChange={(event) => setLiteratureDraft({ ...literatureDraft, link: event.target.value })} /></label><label className="field field-span-3"><span>核心观点 / 对我研究的启发</span><textarea value={literatureDraft.insight} onChange={(event) => setLiteratureDraft({ ...literatureDraft, insight: event.target.value })} placeholder="用一句话说明它如何支持、修正或反驳你的研究判断。" /></label><div className="form-actions"><button className="button button-primary" onClick={addLiteratureRecord}>保存文献</button></div></div></section>
+    <section className="card"><div className="card-heading"><div><p className="eyebrow">阅读库</p><h2>可编辑的文献清单</h2><p className="card-note">点击条目查看链接、项目归属与完整研究启发，并可在原位置修改或删除。</p></div><span className="muted">{data.literatureRecords.length} 条记录</span></div><div className="data-strip-list">{data.literatureRecords.map((record) => { const expanded = expandedLiteratureId === record.id; const edit = expanded && literatureEditDraft?.id === record.id ? literatureEditDraft : null; const project = data.projects.find((item) => item.id === record.projectId); return <article className={`data-strip literature-strip ${expanded ? "is-expanded" : ""}`} key={record.id}><button className="data-strip-trigger" type="button" onClick={() => toggleLiteratureDetail(record)} aria-expanded={expanded}><span className="data-strip-date"><span>记录日期</span><strong>{displayDate(record.date)}</strong></span><span className="data-strip-primary"><span className="record-badge">{record.status}</span><strong>{record.title}</strong></span><span className="data-strip-summary"><span>研究启发</span><strong>{record.insight || record.tags || "未填写"}</strong></span><span className="data-strip-location"><span>项目 / 来源</span><strong>{project?.name || record.source || "暂未关联"}</strong></span><span className="data-strip-chevron" aria-hidden="true">{expanded ? "−" : "+"}</span></button>{expanded && edit && <div className="data-strip-detail"><div className="data-detail-header"><div><p className="eyebrow">文献详情与编辑</p><h3>{record.title}</h3></div><button className="text-button" type="button" onClick={() => { setExpandedLiteratureId(null); setLiteratureEditDraft(null); }}>收起</button></div><div className="data-location-panel"><div><span>DOI / 链接 / 本地位置</span><strong>{edit.link || "尚未填写文献位置。"}</strong></div>{/^https?:\/\//i.test(edit.link.trim()) && <div className="data-location-actions"><a className="button button-small button-secondary" href={edit.link.trim()} target="_blank" rel="noreferrer">打开链接</a></div>}</div><div className="form-grid four data-edit-grid"><label className="field"><span>记录日期</span><input type="date" value={edit.date} onChange={(event) => setLiteratureEditDraft({ ...edit, date: event.target.value })} /></label><label className="field"><span>阅读状态</span><select value={edit.status} onChange={(event) => setLiteratureEditDraft({ ...edit, status: event.target.value as LiteratureRecord["status"] })}><option>待读</option><option>在读</option><option>已读</option></select></label><label className="field field-span-2"><span>关联项目</span><select value={edit.projectId || ""} onChange={(event) => setLiteratureEditDraft({ ...edit, projectId: event.target.value || undefined })}><option value="">暂不关联项目</option>{data.projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label className="field field-span-2"><span>文献题目</span><input value={edit.title} onChange={(event) => setLiteratureEditDraft({ ...edit, title: event.target.value })} /></label><label className="field field-span-2"><span>作者 / 期刊 / 会议</span><input value={edit.source} onChange={(event) => setLiteratureEditDraft({ ...edit, source: event.target.value })} /></label><label className="field field-span-2"><span>关键词 / 标签</span><input value={edit.tags} onChange={(event) => setLiteratureEditDraft({ ...edit, tags: event.target.value })} /></label><label className="field field-span-2"><span>DOI / 链接 / 本地位置</span><input value={edit.link} onChange={(event) => setLiteratureEditDraft({ ...edit, link: event.target.value })} /></label><label className="field field-span-3"><span>核心观点 / 对我研究的启发</span><textarea value={edit.insight} onChange={(event) => setLiteratureEditDraft({ ...edit, insight: event.target.value })} /></label><div className="form-actions data-edit-actions"><button className="button button-primary" type="button" onClick={saveLiteratureEdit}>保存修改</button><button className="text-button danger" type="button" onClick={() => removeLiteratureRecord(record.id)}>删除记录</button></div></div></div>}</article>; })}{!data.literatureRecords.length && <EmptyState title="还没有文献记录" detail="从一篇关键论文开始，留下题目、项目归属和一条自己的研究判断。" />}</div></section>
+  </>;
+
   const renderSimulations = () => <>
     <SectionTitle
       eyebrow="CODE WORKSPACE / 模块、仓库与运行"
@@ -635,6 +879,7 @@ export default function Home() {
         <label className="field field-span-2"><span>本次运行 / 场景 / 参数组</span><input value={simulationDraft.scenario} onChange={(event) => setSimulationDraft({ ...simulationDraft, scenario: event.target.value })} placeholder="例如：501 房间，走廊回环，参数组 B" /></label>
         <label className="field"><span>规模 / 批次</span><input value={simulationDraft.scale} onChange={(event) => setSimulationDraft({ ...simulationDraft, scale: event.target.value })} placeholder="200 车 / run-001" /></label>
         <label className="field"><span>分支 / commit</span><input value={simulationDraft.branch} onChange={(event) => setSimulationDraft({ ...simulationDraft, branch: event.target.value })} placeholder="main @ a1b2c3d" /></label>
+        <label className="field"><span>精确 commit（推荐）</span><input value={simulationDraft.commit} onChange={(event) => setSimulationDraft({ ...simulationDraft, commit: event.target.value })} placeholder="例如：a1b2c3d / tag v0.3" /></label>
         <label className="field field-span-2">
           <span>关联项目（可选）</span>
           <select value={simulationDraft.projectId} onChange={(event) => setSimulationDraft({ ...simulationDraft, projectId: event.target.value })}>
@@ -644,6 +889,10 @@ export default function Home() {
         </label>
         <label className="field field-span-2"><span>本地代码位置 / 补充版本</span><input value={simulationDraft.codeRef} onChange={(event) => setSimulationDraft({ ...simulationDraft, codeRef: event.target.value })} placeholder="本地路径、容器名或旧 commit 备注" /></label>
         <label className="field field-span-2"><span>运行命令 / 入口（可选）</span><input value={simulationDraft.command} onChange={(event) => setSimulationDraft({ ...simulationDraft, command: event.target.value })} placeholder="例如：python run_lifelong.py --agents 200" /></label>
+        <label className="field field-span-2"><span>配置文件 / 参数快照</span><input value={simulationDraft.configRef} onChange={(event) => setSimulationDraft({ ...simulationDraft, configRef: event.target.value })} placeholder="config/run-001.yaml 或参数表链接" /></label>
+        <label className="field field-span-2"><span>输入数据 / 地图版本</span><input value={simulationDraft.inputRef} onChange={(event) => setSimulationDraft({ ...simulationDraft, inputRef: event.target.value })} placeholder="地图、订单、场景或数据集版本" /></label>
+        <label className="field field-span-2"><span>输出目录 / 结果文件</span><input value={simulationDraft.outputRef} onChange={(event) => setSimulationDraft({ ...simulationDraft, outputRef: event.target.value })} placeholder="结果路径、图表或日志文件位置" /></label>
+        <label className="field field-span-3"><span>证据链接 / 图表编号</span><input value={simulationDraft.evidenceRefs} onChange={(event) => setSimulationDraft({ ...simulationDraft, evidenceRefs: event.target.value })} placeholder="例如：Fig. 4、实验记录 #R-2026-09-03、数据条目链接" /></label>
         <label className="field field-span-3"><span>关键结果 / 异常与结论</span><input value={simulationDraft.result} onChange={(event) => setSimulationDraft({ ...simulationDraft, result: event.target.value })} placeholder="吞吐率、耗时、异常日志或下一步实验判断" /></label>
         <div className="form-actions"><button className="button button-primary" onClick={addSimulationRecord}>保存运行日志</button></div>
       </div>
@@ -696,6 +945,7 @@ export default function Home() {
                 <label className="field field-span-2"><span>本次运行 / 场景 / 参数组</span><input value={editDraft.scenario} onChange={(event) => setSimulationEditDraft({ ...editDraft, scenario: event.target.value })} /></label>
                 <label className="field"><span>规模 / 批次</span><input value={editDraft.scale} onChange={(event) => setSimulationEditDraft({ ...editDraft, scale: event.target.value })} /></label>
                 <label className="field"><span>分支 / commit</span><input value={editDraft.branch ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, branch: event.target.value })} /></label>
+                <label className="field"><span>精确 commit / tag</span><input value={editDraft.commit ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, commit: event.target.value })} /></label>
                 <label className="field field-span-2">
                   <span>关联项目（可选）</span>
                   <select value={resolveRecordProjectId(editDraft.projectId, editDraft.taskId) ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, projectId: event.target.value || undefined, taskId: undefined })}>
@@ -705,6 +955,10 @@ export default function Home() {
                 </label>
                 <label className="field field-span-2"><span>本地代码位置 / 补充版本</span><input value={editDraft.codeRef} onChange={(event) => setSimulationEditDraft({ ...editDraft, codeRef: event.target.value })} /></label>
                 <label className="field field-span-2"><span>运行命令 / 入口（可选）</span><input value={editDraft.command ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, command: event.target.value })} /></label>
+                <label className="field field-span-2"><span>配置文件 / 参数快照</span><input value={editDraft.configRef ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, configRef: event.target.value })} /></label>
+                <label className="field field-span-2"><span>输入数据 / 地图版本</span><input value={editDraft.inputRef ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, inputRef: event.target.value })} /></label>
+                <label className="field field-span-2"><span>输出目录 / 结果文件</span><input value={editDraft.outputRef ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, outputRef: event.target.value })} /></label>
+                <label className="field field-span-3"><span>证据链接 / 图表编号</span><input value={editDraft.evidenceRefs ?? ""} onChange={(event) => setSimulationEditDraft({ ...editDraft, evidenceRefs: event.target.value })} /></label>
                 <label className="field field-span-3"><span>关键结果 / 异常与结论</span><input value={editDraft.result} onChange={(event) => setSimulationEditDraft({ ...editDraft, result: event.target.value })} /></label>
                 <div className="form-actions data-edit-actions"><button className="button button-primary" type="button" onClick={saveSimulationEdit}>保存修改</button><button className="text-button danger" type="button" onClick={() => removeSimulationRecord(record.id)}>删除记录</button></div>
               </div>
@@ -737,6 +991,35 @@ export default function Home() {
       {renderTaskEditForm()}
     <div className="table-wrap"><table><thead><tr><th>任务</th><th>项目</th><th>优先级</th><th>状态</th><th>截止</th><th></th></tr></thead><tbody>{filteredTasks.map((task) => <tr key={task.id}><td><strong>{task.title}</strong>{task.description && <span className="table-task-description">{task.description}</span>}<small>预计 {task.estimateMinutes ?? "—"} 分钟</small></td><td>{data.projects.find((project) => project.id === task.projectId)?.name ?? "临时任务"}</td><td><span className={`priority priority-${task.priority}`}>{task.priority}</span></td><td><span className={`task-status ${task.status}`}>{statusText[task.status]}</span></td><td>{task.dueDate ? displayDate(task.dueDate) : "未设"}</td><td><div className="table-task-actions"><button className="text-button" type="button" onClick={() => openTaskEditor(task)}>编辑</button>{task.status === "todo" ? <button className="text-button" onClick={() => startTask(task)}>开始</button> : task.status === "in_progress" ? <button className="text-button" onClick={() => finishTask(task)}>完成</button> : <button className="text-button" onClick={() => update((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "todo", completedAt: undefined } : item) }))}>重开</button>}</div></td></tr>)}{!filteredTasks.length && <tr><td colSpan={6}><EmptyState title="这里还没有任务" detail="任务要能归属项目、判断紧急程度、设置状态和关键时间。" /></td></tr>}</tbody></table></div></section>
   </>;
+
+  const renderProjectsV2 = () => {
+    const activeProject = data.projects.find((project) => project.id === activeProjectId) || null;
+    const projectTasks = activeProject ? data.tasks.filter((task) => task.projectId === activeProject.id) : [];
+    const projectData = activeProject ? data.researchDataRecords.filter((record) => resolveRecordProjectId(record.projectId, record.taskId) === activeProject.id) : [];
+    const projectLiterature = activeProject ? data.literatureRecords.filter((record) => record.projectId === activeProject.id) : [];
+    const projectSimulations = activeProject ? data.simulationRecords.filter((record) => resolveRecordProjectId(record.projectId, record.taskId) === activeProject.id) : [];
+    const projectCommunications = activeProject ? data.advisorRecords.filter((record) => record.projectId === activeProject.id) : [];
+    const projectDone = projectTasks.filter((task) => task.status === "done").length;
+    return <>
+      <SectionTitle eyebrow="PROJECTS / 项目、证据与推进" title={pageLabel("projects")} note="项目是研究档案的主索引：任务、数据、文献、代码运行和外部沟通都可以按项目回看。" action={<div className="button-row"><button className="button button-secondary" onClick={() => setPage("home")}>查看今天</button><button className="button button-primary" onClick={() => { setEditingProjectId(null); setProjectDraft({ name: "", goal: "", stage: "规划中", deadline: "" }); setShowProjectForm((open) => !open); }}>＋ 新建项目</button></div>} />
+      {showProjectForm && <section className="inline-form card"><div className="form-heading"><div><strong>{editingProjectId ? "编辑项目" : "新增项目"}</strong><small>{editingProjectId ? "名称、阶段和目标会立即更新，不影响已关联记录。" : "先定义长期成果、当前阶段和截止日期。"}</small></div><button className="text-button" type="button" onClick={() => { setShowProjectForm(false); setEditingProjectId(null); }}>收起</button></div><div className="form-grid four"><label className="field field-span-2"><span>项目名称</span><input autoFocus value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} placeholder="例如：拥堵感知协同调度研究" /></label><label className="field"><span>当前阶段</span><select value={projectDraft.stage} onChange={(event) => setProjectDraft({ ...projectDraft, stage: event.target.value })}><option>规划中</option><option>推进中</option><option>等待反馈</option><option>已完成</option></select></label><label className="field"><span>阶段截止</span><input type="date" value={projectDraft.deadline} onChange={(event) => setProjectDraft({ ...projectDraft, deadline: event.target.value })} /></label><label className="field field-span-3"><span>目标 / 当前成果</span><textarea value={projectDraft.goal} onChange={(event) => setProjectDraft({ ...projectDraft, goal: event.target.value })} placeholder="明确该项目本阶段要形成的模型、实验结果、论文材料或系统能力。" /></label><div className="form-actions"><button className="button button-primary" onClick={addProject}>{editingProjectId ? "保存项目" : "建立项目"}</button></div></div></section>}
+      <section className="card"><div className="card-heading"><div><p className="eyebrow">项目目录</p><h2>{data.projects.length} 个长期目标</h2></div><span className="muted">点击卡片进入研究档案</span></div><div className="project-grid">{data.projects.map((project) => { const tasks = data.tasks.filter((task) => task.projectId === project.id); const done = tasks.filter((task) => task.status === "done").length; return <article key={project.id} className={`project-card ${activeProjectId === project.id ? "is-active" : ""}`} onClick={() => openProjectArchive(project.id)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openProjectArchive(project.id); }}><div><span className="project-stage">{project.stage}</span><h3>{project.name}</h3><p>{project.goal || "尚未补充阶段目标"}</p></div><div className="project-footer"><span>{project.deadline ? `截止 ${displayDate(project.deadline)}` : "未设截止"}</span><b>{done}/{tasks.length} 任务完成</b></div><Progress value={pct(done, tasks.length)} /><div className="project-card-actions"><button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); openProjectEditor(project); }}>编辑</button><button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); openProjectArchive(project.id); }}>查看档案 →</button></div></article>; })}{!data.projects.length && <EmptyState title="先建立一个长期项目" detail="项目是任务、数据、文献、代码运行和沟通记录的共同索引。" />}</div></section>
+      <section className="card project-archive" id="project-archive">
+        {!activeProject && <EmptyState title="请选择一个项目查看研究档案" detail="项目卡片和数据、代码、沟通记录中的“查看项目”都会打开对应档案。" />}
+        {activeProject && <>
+          <div className="card-heading"><div><p className="eyebrow">PROJECT ARCHIVE / 项目研究档案</p><h2>{activeProject.name}</h2><p className="card-note">{activeProject.goal || "尚未补充项目目标"}</p></div><div className="button-row"><span className="project-stage">{activeProject.stage}</span><button className="button button-small button-secondary" type="button" onClick={() => openProjectEditor(activeProject)}>编辑项目</button></div></div>
+          <div className="project-archive-metrics"><Metric label="任务推进" value={`${projectDone}/${projectTasks.length}`} note="已完成 / 全部任务" tone="blue" /><Metric label="实验与证据" value={projectData.length} note="可打开数据位置与详情" tone="green" /><Metric label="代码运行" value={projectSimulations.length} note="模块、版本和可复现信息" tone="violet" /><Metric label="沟通留痕" value={projectCommunications.length} note="导师、企业与合作方" tone="orange" /></div>
+          <div className="project-archive-grid">
+            <section><div className="archive-head"><strong>下一步任务</strong><button className="text-button" type="button" onClick={() => { setTaskFilter(activeProject.id); document.getElementById("project-task-board")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>查看全部</button></div>{projectTasks.filter((task) => task.status !== "done").slice(0, 4).map((task) => <div className="archive-row" key={task.id}><div><strong>{task.title}</strong><small>{task.dueDate ? displayDate(task.dueDate) : "未设截止"} · {statusText[task.status]}</small></div><button className="text-button" type="button" onClick={() => openTaskEditor(task)}>编辑</button></div>)}{!projectTasks.some((task) => task.status !== "done") && <EmptyState title="暂无待推进任务" detail="可从任务总表补充该项目的下一步。" />}</section>
+            <section><div className="archive-head"><strong>实验与证据</strong><button className="text-button" type="button" onClick={() => { setPage("researchData"); }}>打开数据记录</button></div>{projectData.slice(0, 4).map((record) => <div className="archive-row" key={record.id}><div><strong>{record.title}</strong><small>{record.metrics || record.location || "待补充指标或位置"}</small></div><button className="text-button" type="button" onClick={() => { setPage("researchData"); setExpandedResearchDataId(record.id); setResearchDataEditDraft({ ...record }); }}>详情</button></div>)}{!projectData.length && <EmptyState title="暂无数据记录" detail="数据记录可直接关联到该项目。" />}</section>
+            <section><div className="archive-head"><strong>代码与实验</strong><button className="text-button" type="button" onClick={() => setPage("simulations")}>打开日志</button></div>{projectSimulations.slice(0, 4).map((record) => <div className="archive-row" key={record.id}><div><strong>{record.project}</strong><small>{record.module || "代码模块"} · {record.branch || record.commit || "未填版本"}</small></div><button className="text-button" type="button" onClick={() => { setPage("simulations"); setExpandedSimulationId(record.id); setSimulationEditDraft({ ...record }); }}>详情</button></div>)}{!projectSimulations.length && <EmptyState title="暂无代码运行日志" detail="把模块、仓库、版本和输出证据关联到该项目。" />}</section>
+            <section><div className="archive-head"><strong>文献与沟通</strong><button className="text-button" type="button" onClick={() => setPage(projectLiterature.length ? "literature" : "advisor")}>打开记录</button></div>{[...projectLiterature.map((record) => ({ id: `literature-${record.id}`, title: record.title, detail: `文献 · ${record.status}` })), ...projectCommunications.map((record) => ({ id: `communication-${record.id}`, title: record.topic, detail: `${communicationParty(record)} · ${record.status}` }))].slice(0, 4).map((item) => <div className="archive-row" key={item.id}><div><strong>{item.title}</strong><small>{item.detail}</small></div></div>)}{!projectLiterature.length && !projectCommunications.length && <EmptyState title="暂无文献或沟通留痕" detail="文献与沟通记录也可按项目沉淀。" />}</section>
+          </div>
+        </>}
+      </section>
+      <section className="card task-board" id="project-task-board"><div className="card-heading"><div><p className="eyebrow">任务总表</p><h2>所有可执行动作</h2></div><div className="button-row"><select className="filter-select" value={taskFilter} onChange={(event) => setTaskFilter(event.target.value)}><option value="all">全部任务</option><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="done">已完成</option><option value="blocked">受阻</option>{data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button className="button button-primary" onClick={() => { cancelTaskEdit(); setShowTaskForm((open) => !open); }}>＋ 新建任务</button></div></div>{showTaskForm && <div className="inline-form soft task-create-form"><div className="form-grid four"><label className="field field-span-2"><span>任务名称</span><input autoFocus value={taskDraft.title} onChange={(event) => setTaskDraft({ ...taskDraft, title: event.target.value })} /></label><label className="field"><span>归属项目</span><select value={taskDraft.projectId} onChange={(event) => setTaskDraft({ ...taskDraft, projectId: event.target.value })}><option value="">临时任务</option>{data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="field"><span>优先级</span><select value={taskDraft.priority} onChange={(event) => setTaskDraft({ ...taskDraft, priority: event.target.value as Priority })}><option>紧急</option><option>重要</option><option>一般</option></select></label><label className="field field-span-4"><span>具体内容 / 完成标准</span><textarea value={taskDraft.description} onChange={(event) => setTaskDraft({ ...taskDraft, description: event.target.value })} /></label><label className="field"><span>截止日期</span><input type="date" value={taskDraft.dueDate} onChange={(event) => setTaskDraft({ ...taskDraft, dueDate: event.target.value })} /></label><label className="field"><span>预计分钟</span><input type="number" min="5" value={taskDraft.estimate} onChange={(event) => setTaskDraft({ ...taskDraft, estimate: event.target.value })} /></label><div className="form-actions"><button className="button button-primary" type="button" onClick={addTask}>新增任务</button></div></div></div>}{renderTaskEditForm()}<div className="table-wrap"><table><thead><tr><th>任务</th><th>项目</th><th>优先级</th><th>状态</th><th>截止</th><th></th></tr></thead><tbody>{filteredTasks.map((task) => <tr key={task.id}><td><strong>{task.title}</strong>{task.description && <span className="table-task-description">{task.description}</span>}<small>预计 {task.estimateMinutes ?? "—"} 分钟</small></td><td>{data.projects.find((project) => project.id === task.projectId)?.name ?? "临时任务"}</td><td><span className={`priority priority-${task.priority}`}>{task.priority}</span></td><td><span className={`task-status ${task.status}`}>{statusText[task.status]}</span></td><td>{task.dueDate ? displayDate(task.dueDate) : "未设"}</td><td><div className="table-task-actions"><button className="text-button" type="button" onClick={() => openTaskEditor(task)}>编辑</button>{task.status === "todo" ? <button className="text-button" type="button" onClick={() => startTask(task)}>开始</button> : task.status === "in_progress" ? <button className="text-button" type="button" onClick={() => finishTask(task)}>完成</button> : <button className="text-button" type="button" onClick={() => update((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "todo", completedAt: undefined } : item), dailyPlans: current.dailyPlans.map((plan) => plan.taskId === task.id ? { ...plan, status: "planned" } : plan) }))}>重开</button>}</div></td></tr>)}{!filteredTasks.length && <tr><td colSpan={6}><EmptyState title="这里还没有任务" detail="为项目写下下一步动作，或从日计划自动生成。" /></td></tr>}</tbody></table></div></section>
+    </>;
+  };
 
   const renderThesis = () => <>
     <SectionTitle eyebrow="THESIS / 日周月推进" title={pageLabel("thesis")} note="用里程碑、章节进度和推进日志，把写作与修改沉淀为可统计的证据。" />
@@ -771,10 +1054,10 @@ export default function Home() {
     const recentCommunications = data.advisorRecords.slice(0, 8);
     return <>
       <SectionTitle eyebrow="COMMUNICATION LOG / 导师、企业与合作方" title={pageLabel("advisor")} note="把导师、企业和合作方的沟通、承诺与下一步集中留痕，避免关键信息只留在聊天记录中。" action={<button className="button button-secondary" onClick={() => setPage("home")}>查看今天</button>} />
-      <section className="card advisor-form">
+      <section className="card advisor-form" id="communication-editor">
         <div className="card-heading">
-          <div><p className="eyebrow">新增沟通留痕</p><h2>先确认对象，再沟通，再跟进</h2></div>
-          <button className="text-button danger" onClick={() => { setAdvisorDraft(blankAdvisorDraft()); notify("已清空本次填写内容"); }}>清空本次填写</button>
+          <div><p className="eyebrow">{editingAdvisorId ? "编辑沟通留痕" : "新增沟通留痕"}</p><h2>{editingAdvisorId ? "修改后会保留已有跟进任务" : "先确认对象，再沟通，再跟进"}</h2></div>
+          <button className="text-button danger" onClick={() => { setAdvisorDraft(blankAdvisorDraft()); setEditingAdvisorId(null); notify("已清空本次填写内容"); }}>{editingAdvisorId ? "取消编辑" : "清空本次填写"}</button>
         </div>
         <div className="form-grid four">
           <label className="field"><span>沟通对象类型</span><select value={advisorDraft.partyType} onChange={(event) => setAdvisorDraft({ ...advisorDraft, partyType: event.target.value as CommunicationParty })}><option>导师</option><option>企业</option><option>合作方</option></select></label>
@@ -806,7 +1089,7 @@ export default function Home() {
             <label className="field"><span>下一次跟进动作 / 时间</span><textarea value={advisorDraft.nextAction} onChange={(event) => setAdvisorDraft({ ...advisorDraft, nextAction: event.target.value })} /></label>
           </div>
         </div>
-        <div className="form-actions"><button className="button button-primary" onClick={saveAdvisor}>保存沟通记录</button></div>
+        <div className="form-actions"><button className="button button-primary" onClick={saveAdvisorRecord}>{editingAdvisorId ? "保存修改" : "保存沟通记录"}</button></div>
       </section>
       <div className="two-column">
         <section className="card">
@@ -818,7 +1101,7 @@ export default function Home() {
           <div className="card-heading"><div><p className="eyebrow">最近沟通留痕</p><h2>导师、企业与合作方</h2></div><span className="muted">{data.advisorRecords.length} 条</span></div>
           {recentCommunications.map((record) => {
             const linkedProject = data.projects.find((project) => project.id === record.projectId);
-            return <div className="log-row" key={record.id}><time>{displayDate(record.date)}</time><div><strong>{record.topic}</strong><small>{communicationParty(record)} · {communicationCounterparty(record)} · {record.status} · {record.channel}{linkedProject ? ` · ${linkedProject.name}` : ""}</small></div></div>;
+            return <div className="log-row" key={record.id}><time>{displayDate(record.date)}</time><div><strong>{record.topic}</strong><small>{communicationParty(record)} · {communicationCounterparty(record)} · {record.status} · {record.channel}{linkedProject ? ` · ${linkedProject.name}` : ""}</small></div><div className="record-actions"><button className="text-button" type="button" onClick={() => openAdvisorEditor(record)}>编辑</button><button className="text-button danger" type="button" onClick={() => removeAdvisorRecord(record.id)}>删除</button></div></div>;
           })}
           {!data.advisorRecords.length && <EmptyState title="还没有沟通记录" detail="从下一次导师沟通、企业对接或会后纪要开始。" />}
         </section>
@@ -867,8 +1150,23 @@ export default function Home() {
     <section className="card"><div className="card-heading"><div><p className="eyebrow">最近新增</p><h2>记录概览</h2></div><span className="muted">{recentActivities.length} 条可回看记录</span></div><div className="activity-list">{recentActivities.map((item, index) => <div className="log-row" key={`${item.date}-${index}`}><time>{displayDate(localDate(new Date(item.date)))}</time><div><strong>{item.title}</strong><small>{item.kind}</small></div></div>)}{!recentActivities.length && <EmptyState title="数据还是空的" detail="开始打卡、建立任务或保存一条论文推进日志后，这里会显示近期记录。" />}</div></section>
   </>;
 
+  const renderDataV2 = () => <>
+    {renderData()}
+    <section className="card cloud-account-card">
+      <div className="card-heading"><div><p className="eyebrow">个人账户与云端同步</p><h2>任意电脑登录同一套工作台</h2></div><span className={`cloud-status ${cloudStatus}`}>{cloudStatus === "synced" ? "云端已同步" : cloudStatus === "syncing" ? "正在同步" : cloudStatus === "attention" ? "需要处理" : "读取中"}</span></div>
+      <p className="muted">当前账户：<strong>{account?.username || "未登录"}</strong>。你的工作记录只写入你的私有云端账户；GitHub 仓库仍只包含程序代码。</p>
+      <div className="button-row"><button className="button button-primary" type="button" disabled={authBusy || !cloudReady} onClick={() => { void saveCloudWorkspace(); }}>立即同步到云端</button><button className="button button-secondary" type="button" disabled={authBusy} onClick={() => { void loadCloudWorkspace(); }}>从云端刷新</button><button className="button button-quiet" type="button" disabled={authBusy} onClick={() => { void signOut(); }}>退出当前设备</button></div>
+      <div className="subsection"><p className="eyebrow">修改登录密码</p><h3>密码只在此页面提交，不会显示或保存到代码仓库。</h3><div className="form-grid four"><label className="field field-span-2"><span>当前密码</span><input type="password" autoComplete="current-password" value={passwordDraft.currentPassword} onChange={(event) => setPasswordDraft({ ...passwordDraft, currentPassword: event.target.value })} /></label><label className="field field-span-2"><span>新密码（至少 10 位）</span><input type="password" autoComplete="new-password" value={passwordDraft.nextPassword} onChange={(event) => setPasswordDraft({ ...passwordDraft, nextPassword: event.target.value })} /></label><div className="form-actions"><button className="button button-secondary" type="button" disabled={authBusy} onClick={() => { void changePassword(); }}>更新密码</button></div></div></div>
+    </section>
+  </>;
+
   let content: React.ReactNode;
-  if (page === "home") content = renderHome(); else if (page === "plans") content = renderPlans(); else if (page === "projects") content = renderProjects(); else if (page === "thesis") content = renderThesis(); else if (page === "submissions") content = renderSubmissions(); else if (page === "researchData") content = renderResearchData(); else if (page === "literature") content = renderLiterature(); else if (page === "simulations") content = renderSimulations(); else if (page === "health") content = renderHealth(); else if (page === "care") content = renderCare(); else if (page === "advisor") content = renderAdvisor(); else if (page === "review") content = renderReview(); else if (page === "achievements") content = renderAchievements(); else if (page === "analytics") content = renderAnalytics(); else content = renderData();
+  if (page === "home") content = renderHome(); else if (page === "plans") content = renderPlansV2(); else if (page === "projects") content = renderProjectsV2(); else if (page === "thesis") content = renderThesis(); else if (page === "submissions") content = renderSubmissions(); else if (page === "researchData") content = renderResearchData(); else if (page === "literature") content = renderLiteratureV2(); else if (page === "simulations") content = renderSimulations(); else if (page === "health") content = renderHealth(); else if (page === "care") content = renderCare(); else if (page === "advisor") content = renderAdvisor(); else if (page === "review") content = renderReview(); else if (page === "achievements") content = renderAchievements(); else content = renderDataV2();
+  if (!hydrated || account === null) return <main className="auth-shell"><section className="auth-card auth-loading"><span className="brand-mark">Y</span><p className="eyebrow">YANG · PHD MASTER WORKSPACE</p><h1>正在打开你的工作台</h1><p>正在读取本机记录与登录状态。</p></section></main>;
+  if (!account.authenticated) {
+    const isSetup = !account.hasAccount;
+    return <main className="auth-shell"><section className="auth-card"><div className="auth-brand"><span className="brand-mark">Y</span><div><p className="eyebrow">YANG · PHD MASTER WORKSPACE</p><h1>{isSetup ? "设置你的个人登录" : "登录工作台"}</h1></div></div><p className="auth-note">{isSetup ? "设置完成后，你可在任意电脑的浏览器中使用同一账号登录，并同步同一套工作记录。" : "使用你为工作台设置的账号和密码登录；不需要 ChatGPT 账号。"}</p>{hasMeaningfulData(data) && <div className="auth-local-notice">检测到这台设备中已有本机记录。登录后可选择迁移到云端或保留云端版本。</div>}<div className="auth-form"><label className="field"><span>账号</span><input autoComplete="username" value={authForm.username} onChange={(event) => setAuthForm({ ...authForm, username: event.target.value })} placeholder="3–32 位英文、数字或 ._-" /></label><label className="field"><span>密码</span><input type="password" autoComplete={isSetup ? "new-password" : "current-password"} value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} placeholder={isSetup ? "至少 10 位" : "输入你的密码"} /></label>{isSetup && <label className="field"><span>一次性初始化码</span><input type="password" autoComplete="one-time-code" value={authForm.setupCode} onChange={(event) => setAuthForm({ ...authForm, setupCode: event.target.value })} placeholder="由部署完成后的设置说明提供" /></label>} {authError && <p className="auth-error" role="alert">{authError}</p>}<button className="button button-primary auth-submit" type="button" disabled={authBusy} onClick={() => { void submitAuth(isSetup ? "setup" : "login"); }}>{authBusy ? "正在验证…" : isSetup ? "创建个人账户并进入工作台" : "登录工作台"}</button></div><small className="auth-foot">密码会以加盐哈希方式保存在私有数据库中；不会出现在网页源码、浏览器备份或 GitHub 仓库。</small></section></main>;
+  }
   const calendarPanel = calendarOpen && <section className="calendar-popover" role="dialog" aria-label="工作日历">
     <div className="calendar-popover-head"><div><p className="eyebrow">WORK CALENDAR / 日历回看</p><h3>按日期查看当天记录</h3></div><button className="calendar-close" type="button" aria-label="关闭工作日历" onClick={() => setCalendarOpen(false)}>×</button></div>
     <div className="calendar-popover-body">
@@ -894,10 +1192,11 @@ export default function Home() {
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">{data.workspace.brandName.trim().slice(0, 1).toUpperCase() || "Y"}</span><div><strong>{data.workspace.brandName || "Yang · PhD Master"}</strong><small>{data.workspace.brandSubtitle || "Workspace"}</small></div></div>
       <div className="sidebar-date"><span>{isViewingToday ? "今天" : "正在查看"}</span><strong>{displayDate(workspaceDate)}</strong></div>
-      <nav aria-label="工作台导航">{navItems.map((item) => <div key={item.id} className="nav-group">{item.group && <p>{item.group}</p>}<button className={`nav-item ${page === item.id ? "active" : ""}`} onClick={() => { setPage(item.id); setCalendarOpen(false); if (item.id !== "home") { setSelectedCalendarDate(today); setCalendarMonth(monthStart(today)); } }}><span>{item.short}</span>{pageLabel(item.id)}{item.id === "home" && <b>{todayTasks.length}</b>}</button></div>)}</nav>
+      <nav aria-label="工作台导航">{navItems.map((item) => <div key={item.id} className="nav-group">{item.group && <p>{item.group}</p>}<button className={`nav-item ${page === item.id ? "active" : ""}`} onClick={() => { setPage(item.id); setCalendarOpen(false); }}><span>{item.short}</span>{pageLabel(item.id)}{item.id === "home" && <b>{todayTasks.length}</b>}</button></div>)}</nav>
       <div className="sidebar-foot"><span>{localFolderStatus === "connected" ? "本地同步已启用" : "本机模式"}</span><p>{localFolderStatus === "connected" ? `已同步到 ${localFolder?.name} 文件夹。` : "当前数据保存在浏览器；可在数据管理中连接本地文件夹。"}</p></div>
     </aside>
     <main className="main"><header className="topbar"><div className="masthead"><span className="masthead-seal" aria-hidden="true">Y</span><div><span className="crumb">{data.workspace.brandName} {data.workspace.brandSubtitle} / {pageTitle}</span><h2>{pageTitle}</h2></div></div><div className="topbar-actions"><div className="calendar-anchor"><button type="button" className={`calendar-trigger ${calendarOpen ? "is-open" : ""}`} aria-expanded={calendarOpen} aria-haspopup="dialog" onClick={() => setCalendarOpen((open) => !open)}><span className="calendar-trigger-icon" aria-hidden="true">▦</span><span><small>工作日历</small><strong>{displayDate(selectedCalendarDate)}</strong></span></button>{calendarPanel}</div><button className="date-chip" onClick={() => switchWorkspaceDate(today)}>回到今天</button></div></header><div className="content">{content}</div></main>
+    {migrationPrompt && <div className="migration-backdrop" role="dialog" aria-modal="true" aria-label="确认云端数据版本"><section className="migration-dialog"><p className="eyebrow">DATA MIGRATION / 数据迁移确认</p><h2>{migrationPrompt.kind === "upload-local" ? "发现本机工作记录" : "本机与云端都有记录"}</h2><p>{migrationPrompt.kind === "upload-local" ? "这台设备的现有记录尚未写入云端。确认后，它将成为你在其它电脑登录时看到的同一套工作台数据。" : "本机记录的更新时间晚于云端。请选择要作为后续同步基础的版本；未选择的版本仍可先下载 JSON 备份。"}</p>{migrationPrompt.cloud && <div className="migration-meta"><span>云端最后更新</span><strong>{displayDate(localDate(new Date(migrationPrompt.cloud.updatedAt)))} {displayTime(migrationPrompt.cloud.updatedAt)}</strong></div>}<div className="button-row"><button className="button button-primary" type="button" onClick={() => { void acceptMigration("local"); }}>使用本机记录并同步</button>{migrationPrompt.cloud && <button className="button button-secondary" type="button" onClick={() => { void acceptMigration("cloud"); }}>改用云端记录</button>}</div></section></div>}
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;
 }
