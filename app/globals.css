@@ -146,6 +146,7 @@ input::placeholder, textarea::placeholder { color: #a2afbf; }
 .small-stat-grid div { min-width: 0; padding: 10px; border-right: 1px solid #e7edf2; background: #fbfcfd; }.small-stat-grid div:last-child { border-right: 0; }
 .small-stat-grid span, .small-stat-grid strong { display: block; }.small-stat-grid span { min-height: 27px; color: #748398; font-size: 10px; line-height: 1.35; }.small-stat-grid strong { margin-top: 4px; color: #2d4055; font-size: 14px; white-space: nowrap; }
 .list-label { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin: 15px 0 8px; color: #53697f; font-size: 12px; font-weight: 800; }.list-label > div { display: flex; gap: 10px; }
+.focus-total { color: #70849a; font-size: 11px; font-weight: 600; }
 .compact-list, .log-list, .archive-list, .activity-list { display: flex; flex-direction: column; gap: 7px; }
 .compact-row, .log-row { display: flex; align-items: center; gap: 10px; min-height: 45px; padding: 8px 0; border-bottom: 1px solid #eef1f5; }.compact-row:last-child, .log-row:last-child { border-bottom: 0; }
 .row-icon { flex: 0 0 27px; width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: #ecf3fb; color: #2f75ae; font-size: 11px; font-weight: 800; }.row-icon.leave { background: #fff0e6; color: #ce7b29; }.row-icon.focus { background: #f1edfc; color: #7758bf; }.row-icon.success { background: #e8f6ef; color: #258358; }
@@ -644,7 +645,8 @@ td, th { font-size: 13px; } td strong { font-size: 14px; } td small { font-size:
 .history-view-banner span { color: #f2c76f; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
 .history-view-banner strong { font-family: Georgia, "Songti SC", serif; font-size: 17px; }
 .history-view-banner small { flex: 1 1 260px; color: rgba(255, 255, 255, .8); font-size: 12px; line-height: 1.5; }
-.history-metrics, .history-dashboard { margin-bottom: 20px; }
+.history-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 20px; }
+.history-dashboard { margin-bottom: 20px; }
 .history-records-card { margin-bottom: 26px; }
 .history-activity-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 
@@ -766,6 +768,7 @@ td, th { font-size: 13px; } td strong { font-size: 14px; } td small { font-size:
 
 @media (max-width: 1000px) {
   .calendar-popover { width: min(660px, calc(100vw - 276px)); }
+  .history-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .history-activity-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
