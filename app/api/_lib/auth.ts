@@ -20,11 +20,16 @@ const SESSION_COOKIE = "yang_workspace_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PBKDF2_ITERATIONS = 310_000;
 
-async function db(): Promise<D1Database> {
+async function runtimeEnv() {
   // Keep the Cloudflare binding behind a runtime import so the static server
   // preview used by the repository test can render ordinary pages in Node.
   // API requests run in the Worker and resolve this import normally.
   const { env } = await import("cloudflare:workers");
+  return env as typeof env & { OWNER_SETUP_TOKEN?: string };
+}
+
+async function db(): Promise<D1Database> {
+  const env = await runtimeEnv();
   if (!env.DB) throw new Error("Cloud database is unavailable.");
   return env.DB as D1Database;
 }
@@ -132,8 +137,8 @@ export function clearSessionResponse(payload: Record<string, unknown> = {}) {
   return response;
 }
 
-export function setupTokenMatches(value: string) {
-  const token = String((env as unknown as { OWNER_SETUP_TOKEN?: string }).OWNER_SETUP_TOKEN || "");
+export async function setupTokenMatches(value: string) {
+  const token = String((await runtimeEnv()).OWNER_SETUP_TOKEN || "");
   return Boolean(token) && constantTimeEqual(value, token);
 }
 

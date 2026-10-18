@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     const username = asText(payload.username, 32);
     const password = typeof payload.password === "string" ? payload.password : "";
     const setupCode = asText(payload.setupCode, 256);
-    if (!setupTokenMatches(setupCode)) return Response.json({ error: "初始化码不正确。" }, { status: 403 });
+    if (!(await setupTokenMatches(setupCode))) return Response.json({ error: "初始化码不正确。" }, { status: 403 });
     if (!validateUsername(username)) return Response.json({ error: "账号使用 3–32 位字母、数字、点、下划线或连字符。" }, { status: 400 });
     if (!validatePassword(password)) return Response.json({ error: "密码至少 10 位。" }, { status: 400 });
     const credentials = await passwordCredentials(password);
